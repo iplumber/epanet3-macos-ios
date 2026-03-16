@@ -22,6 +22,19 @@ DerivedData/
 epanet  resource/epanet-dev-develop/build/
 epanet  resource/EPANET2.2-2.2.0/build/
 
+### EPANET resources (keep local, only track selected inp files)
+epanet  resource/**
+
+# Allowlist the inp files we want in git
+!epanet  resource/example/
+!epanet  resource/example/Epanet 管网/
+!epanet  resource/example/Epanet 管网/net1.inp
+!epanet  resource/example/Epanet 管网/any1.inp
+!epanet  resource/example/可计算 算例管网 inp/
+!epanet  resource/example/可计算 算例管网 inp/400.inp
+!epanet  resource/example/可计算 算例管网 inp/10000.inp
+!epanet  resource/example/可计算 算例管网 inp/90000.inp
+
 ### Large EPANET example not tracked
 epanet  resource/example/可计算 算例管网 inp/490000.inp
 epanet  resource/example/不可计算 算例管网 inp/490000.inp
