@@ -1,0 +1,27 @@
+### macOS
+.DS_Store
+
+### SwiftPM
+.build/
+.swiftpm/xcode/
+
+### Xcode
+*.xcuserdata/
+*.xccheckout
+*.moved-aside
+DerivedData/
+*.xcuserstate
+
+### Swift / Debug
+*.dSYM
+
+### Logs
+*.log
+
+### EPANET resource build dirs (upstream)
+epanet  resource/epanet-dev-develop/build/
+epanet  resource/EPANET2.2-2.2.0/build/
+
+### Large EPANET example not tracked
+epanet  resource/example/可计算 算例管网 inp/490000.inp
+epanet  resource/example/不可计算 算例管网 inp/490000.inp

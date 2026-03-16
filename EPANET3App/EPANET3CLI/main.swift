@@ -1,0 +1,80 @@
+/* EPANET 3 CLI - Test harness for engine + Swift bridge
+ * Usage: EPANET3CLI <inp_path> [rpt_path] [out_path]
+ * Default: report and output to temp files
+ */
+
+import Foundation
+import EPANET3Bridge
+
+let args = CommandLine.arguments
+guard args.count >= 2 else {
+    print("Usage: EPANET3CLI <inp_path> [rpt_path] [out_path]")
+    exit(1)
+}
+
+let inpPath = args[1]
+let rptPath = args.count >= 3 ? args[2] : (FileManager.default.temporaryDirectory.path + "/epanet3_rpt.txt")
+let outPath = args.count >= 4 ? args[3] : (FileManager.default.temporaryDirectory.path + "/epanet3_out.bin")
+
+guard FileManager.default.fileExists(atPath: inpPath) else {
+    print("Error: Input file not found: \(inpPath)")
+    exit(1)
+}
+
+print("EPANET 3 Swift Bridge Test")
+print("Input:  \(inpPath)")
+print("Report: \(rptPath)")
+print("Output: \(outPath)")
+print("")
+
+do {
+    // Option 1: One-shot run (same as run-epanet3)
+    print("--- One-shot run (EN_runEpanet) ---")
+    try runEpanet(inpPath: inpPath, rptPath: rptPath, outPath: outPath)
+    print("One-shot run completed successfully.\n")
+
+    // Option 2: Project API (load, init, step)
+    print("--- Project API (load, initSolver, runSolver loop) ---")
+    let project = EpanetProject()
+    try project.load(path: inpPath)
+    let nodeCount = try project.nodeCount()
+    let linkCount = try project.linkCount()
+    print("Loaded: \(nodeCount) nodes, \(linkCount) links")
+
+    try project.initSolver(initFlows: false)
+    var t: Int32 = 0
+    var stepCount = 0
+    repeat {
+        try project.runSolver(time: &t)
+        var dt: Int32 = 0
+        try project.advanceSolver(dt: &dt)
+        stepCount += 1
+        if stepCount <= 3 || dt == 0 {
+            print("  Step \(stepCount): t=\(t), dt=\(dt)")
+        } else if stepCount == 4 {
+            print("  ...")
+        }
+    } while t > 0
+
+    // Sample a node and link
+    if nodeCount > 0 {
+        let id = try project.getNodeId(index: 1)
+        let elev = try project.getNodeValue(nodeIndex: 1, param: .elevation)
+        let pressure = try project.getNodeValue(nodeIndex: 1, param: .pressure)
+        print("Node 1: id=\(id), elev=\(elev), pressure=\(pressure)")
+    }
+    if linkCount > 0 {
+        let nodes = try project.getLinkNodes(linkIndex: 1)
+        let flow = try project.getLinkValue(linkIndex: 1, param: .flow)
+        print("Link 1: nodes \(nodes.node1)-\(nodes.node2), flow=\(flow)")
+
+    }
+
+    print("\nProject API test completed successfully.")
+} catch EpanetError.apiError(let code) {
+    print("EPANET API error: \(code)")
+    exit(Int32(truncatingIfNeeded: code))
+} catch {
+    print("Error: \(error)")
+    exit(1)
+}

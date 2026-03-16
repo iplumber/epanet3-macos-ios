@@ -1,0 +1,30 @@
+---
+description: 管网图视窗必须保持 X 与 Y 方向坐标比例一致，不得拉宽变形
+globs: EPANET3App/**/*.swift, EPANET3Renderer/**/*.swift
+alwaysApply: false
+---
+
+# 管网图视窗 XY 比例一致（编程视窗纪律）
+
+## 原则
+
+每次载入或显示管网图时，**X 与 Y 方向的坐标比例必须一致**，图形不得被横向或纵向拉宽变形。
+
+- 同一场景单位在 X 方向和 Y 方向应映射到**相同的像素长度**。
+- 无论视窗是宽屏、竖屏、有无属性列表，比例一致规则都必须遵守。
+
+## 实现要点
+
+1. **Metal 绘制**：使用 viewport 宽高比修正。设 viewport 为 (dw, dh)，基础缩放为 s，则：
+   - 当 dw ≥ dh（宽屏）：`scaleX = s * dh/dw`，`scaleY = s`
+   - 当 dh > dw（竖屏）：`scaleX = s`，`scaleY = s * dw/dh`
+   这样 `scaleX * (dw/2) = scaleY * (dh/2)`，同一场景距离在屏幕上等长。
+
+2. **命中检测与交互**：hitTest、滚轮缩放、平移的 NDC/场景换算必须使用与绘制**相同的** scaleX/scaleY（按当前 view 的 w、h 做同样的宽高比修正），否则点击与缩放会错位。
+
+3. **不要**仅用 `scaleX = scaleY = s` 且 viewport 满屏而不做宽高比修正，否则在非正方形视窗下会拉变形。
+
+## 相关文件
+
+- `EPANET3Renderer/Sources/EPANET3Renderer/MetalNetworkView.swift`：draw 中 scaleX/scaleY 计算、hitTest 中一致计算。
+- `EPANET3App/ContentView.swift`：滚轮缩放、平移回调中的 scaleX/scaleY 与上面保持一致。
