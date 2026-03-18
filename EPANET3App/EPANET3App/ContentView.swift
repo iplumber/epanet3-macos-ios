@@ -30,12 +30,41 @@ public struct ContentView: View {
     @State private var panY: CGFloat = 0
     @State private var lastScale: CGFloat = 1
     @State private var lastPan: CGSize = .zero
-    @State private var selectedNodeIndex: Int?
-    @State private var selectedLinkIndex: Int?
-    @State private var isPropertyPanelVisible = false
     @State private var mouseSceneX: Float?
     @State private var mouseSceneY: Float?
     @State private var showRunResultSheet = false
+
+    private var nodeRange: (Float, Float)? {
+        guard !appState.nodePressureValues.isEmpty else { return nil }
+        guard let minV = appState.nodePressureValues.min(), let maxV = appState.nodePressureValues.max() else { return nil }
+        return (minV, maxV)
+    }
+
+    private var linkRange: (Float, Float)? {
+        guard !appState.linkFlowValues.isEmpty else { return nil }
+        guard let minV = appState.linkFlowValues.min(), let maxV = appState.linkFlowValues.max() else { return nil }
+        return (minV, maxV)
+    }
+
+    private func centerView(on target: (x: Float, y: Float), in scene: NetworkScene) {
+        let centerX = (scene.bounds.minX + scene.bounds.maxX) * 0.5
+        let centerY = (scene.bounds.minY + scene.bounds.maxY) * 0.5
+        panX = CGFloat((centerX - target.x) / 0.01)
+        panY = CGFloat((target.y - centerY) / 0.01)
+        lastPan = CGSize(width: panX, height: panY)
+    }
+
+    private func focusOnCurrentSelection(in scene: NetworkScene) {
+        if let nodeIndex = appState.selectedNodeIndex,
+           let node = scene.nodes.first(where: { $0.nodeIndex == nodeIndex }) {
+            centerView(on: (node.x, node.y), in: scene)
+            return
+        }
+        if let linkIndex = appState.selectedLinkIndex,
+           let link = scene.links.first(where: { $0.linkIndex == linkIndex }) {
+            centerView(on: ((link.x1 + link.x2) * 0.5, (link.y1 + link.y2) * 0.5), in: scene)
+        }
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -58,6 +87,50 @@ public struct ContentView: View {
             } else if let scene = appState.scene {
                 if appState.project != nil {
                     HStack(spacing: 8) {
+                        Button {
+                            appState.setEditorMode(.browse)
+                        } label: {
+                            Label("浏览", systemImage: "hand.tap")
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(appState.editorMode == .browse ? .accentColor : .gray)
+
+                        Button {
+                            appState.setEditorMode(.add)
+                        } label: {
+                            Label("添加", systemImage: "plus.circle")
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(appState.editorMode == .add ? .accentColor : .gray)
+
+                        Button {
+                            appState.setEditorMode(.delete)
+                        } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(appState.editorMode == .delete ? .accentColor : .gray)
+
+                        if appState.editorMode == .edit {
+                            Text("编辑中")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        } else if appState.editorMode == .result {
+                            Text("结果")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Picker("结果上图", selection: Binding(
+                            get: { appState.resultOverlayMode },
+                            set: { appState.setResultOverlayMode($0) }
+                        )) {
+                            Text("无").tag(ResultOverlayMode.none)
+                            Text("压力").tag(ResultOverlayMode.pressure)
+                            Text("流量").tag(ResultOverlayMode.flow)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 260)
+
                         Button {
                             appState.runCalculation()
                         } label: {
@@ -85,7 +158,18 @@ public struct ContentView: View {
                     .background(AppColors.controlBackground)
                 }
                 ZStack(alignment: .trailing) {
-                    MetalNetworkView(scene: scene, scale: scale, panX: panX, panY: panY, selectedNodeIndex: selectedNodeIndex, selectedLinkIndex: selectedLinkIndex) { delta, viewPoint, viewSize in
+                    MetalNetworkView(
+                        scene: scene,
+                        scale: scale,
+                        panX: panX,
+                        panY: panY,
+                        selectedNodeIndex: appState.selectedNodeIndex,
+                        selectedLinkIndex: appState.selectedLinkIndex,
+                        nodeScalars: appState.resultOverlayMode == .pressure ? appState.nodePressureValues : nil,
+                        linkScalars: appState.resultOverlayMode == .flow ? appState.linkFlowValues : nil,
+                        nodeScalarRange: appState.resultOverlayMode == .pressure ? nodeRange : nil,
+                        linkScalarRange: appState.resultOverlayMode == .flow ? linkRange : nil
+                    ) { delta, viewPoint, viewSize in
                         let newScale = max(0.2, min(20, scale * (1 + delta)))
                         if viewSize.width > 0, viewSize.height > 0 {
                             let w = Float(viewSize.width), h = Float(viewSize.height)
@@ -146,8 +230,7 @@ public struct ContentView: View {
                         panY += CGFloat(Float(dy) * 2 / (h * scaleY * 0.01))
                         lastPan = CGSize(width: panX, height: panY)
                     } onPressEscape: {
-                        selectedNodeIndex = nil
-                        selectedLinkIndex = nil
+                        appState.clearSelection()
                     } onMouseMove: { coords in
                         if let (x, y) = coords {
                             mouseSceneX = x
@@ -157,22 +240,21 @@ public struct ContentView: View {
                             mouseSceneY = nil
                         }
                     } onSelect: { node, link in
-                        selectedNodeIndex = node
-                        selectedLinkIndex = link
-                        if node != nil || link != nil {
-                            isPropertyPanelVisible = true
-                        }
+                        appState.setSelection(nodeIndex: node, linkIndex: link)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
                     .background(Color(white: 0.95))
-                    if isPropertyPanelVisible {
-                        PropertyPanelView(appState: appState, selectedNodeIndex: selectedNodeIndex, selectedLinkIndex: selectedLinkIndex, onClose: {
-                            selectedNodeIndex = nil
-                            selectedLinkIndex = nil
-                            isPropertyPanelVisible = false
+                    if appState.isPropertyPanelVisible {
+                        PropertyPanelView(appState: appState, selectedNodeIndex: appState.selectedNodeIndex, selectedLinkIndex: appState.selectedLinkIndex, onClose: {
+                            appState.clearSelection()
                         })
                         .frame(width: 260)
+                    }
+                    if appState.resultOverlayMode != .none {
+                        ResultLegendView(mode: appState.resultOverlayMode, nodeRange: nodeRange, linkRange: linkRange)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     }
                 }
                     .gesture(
@@ -188,8 +270,18 @@ public struct ContentView: View {
                     .onTapGesture(count: 2) {
                         scale = 1; panX = 0; panY = 0
                         lastScale = 1; lastPan = .zero
-                        selectedNodeIndex = nil
-                        selectedLinkIndex = nil
+                        appState.clearSelection()
+                    }
+                    .onChange(of: appState.errorFocusNodeIndex) { newNode in
+                        guard let node = newNode else { return }
+                        appState.setSelection(nodeIndex: node, linkIndex: nil)
+                    }
+                    .onChange(of: appState.errorFocusLinkIndex) { newLink in
+                        guard let link = newLink else { return }
+                        appState.setSelection(nodeIndex: nil, linkIndex: link)
+                    }
+                    .onChange(of: appState.focusSelectionToken) { _ in
+                        focusOnCurrentSelection(in: scene)
                     }
             } else {
                 VStack(spacing: 16) {
@@ -253,6 +345,34 @@ public struct ContentView: View {
         .sheet(isPresented: $showRunResultSheet) {
             RunResultSheet(result: appState.runResult)
         }
+    }
+}
+
+private struct ResultLegendView: View {
+    let mode: ResultOverlayMode
+    let nodeRange: (Float, Float)?
+    let linkRange: (Float, Float)?
+
+    var body: some View {
+        let range = mode == .pressure ? nodeRange : linkRange
+        VStack(alignment: .leading, spacing: 6) {
+            Text(mode == .pressure ? "压力上图" : "流量上图")
+                .font(.caption.weight(.semibold))
+            LinearGradient(colors: [.blue, .red], startPoint: .leading, endPoint: .trailing)
+                .frame(width: 140, height: 10)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            if let r = range {
+                Text(String(format: "%.3f  ->  %.3f", r.0, r.1))
+                    .font(.caption2.monospaced())
+                    .foregroundColor(.secondary)
+            } else {
+                Text("暂无结果数据")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(8)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

@@ -91,6 +91,42 @@ func _EN_getLinkNodes(_ index: Int32, _ node1: UnsafeMutablePointer<Int32>?, _ n
 @_silgen_name("EN_getLinkValue")
 func _EN_getLinkValue(_ index: Int32, _ param: Int32, _ value: UnsafeMutablePointer<Double>?, _ p: UnsafeMutableRawPointer?) -> Int32
 
+@_silgen_name("EN_getOption")
+func _EN_getOption(_ type: Int32, _ value: UnsafeMutablePointer<Double>?, _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_getTimeParam")
+func _EN_getTimeParam(_ type: Int32, _ value: UnsafeMutablePointer<CLong>?, _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_getFlowUnits")
+func _EN_getFlowUnits(_ units: UnsafeMutablePointer<Int32>?, _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_setOption")
+func _EN_setOption(_ type: Int32, _ value: Double, _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_setTimeParam")
+func _EN_setTimeParam(_ type: Int32, _ value: Int32, _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_getError")
+func _EN_getError(_ code: Int32, _ msg: UnsafeMutablePointer<CChar>?, _ maxLen: Int32, _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_setNodeValue")
+func _EN_setNodeValue(_ index: Int32, _ param: Int32, _ value: Double, _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_setLinkValue")
+func _EN_setLinkValue(_ index: Int32, _ param: Int32, _ value: Double, _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_createNode")
+func _EN_createNode(_ id: UnsafePointer<CChar>?, _ type: Int32, _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_createLink")
+func _EN_createLink(_ id: UnsafePointer<CChar>?, _ type: Int32, _ fromNode: Int32, _ toNode: Int32, _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_deleteNode")
+func _EN_deleteNode(_ id: UnsafePointer<CChar>?, _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_deleteLink")
+func _EN_deleteLink(_ id: UnsafePointer<CChar>?, _ p: UnsafeMutableRawPointer?) -> Int32
+
 // MARK: - Enums (matching epanet3.h)
 
 public enum NodeParams: Int32 {
@@ -119,10 +155,63 @@ public enum LinkTypes: Int32 {
     case cvpipe = 0, pipe, pump, prv, psv, pbv, fcv, tcv, gpv
 }
 
+public enum OptionParams: Int32 {
+    case trials = 0, accuracy, qualTol, emitExpon, demandMult
+    case hydTol, minPressure, maxPressure, pressExpon, netLeakCoeff1, netLeakCoeff2
+}
+
+public enum TimeParams: Int32 {
+    case duration = 0, hydStep, qualStep, patternStep, patternStart
+    case reportStep, reportStart, ruleStep, statistic, periods, startDate
+}
+
+public struct EpanetErrorContext: Equatable {
+    public let api: String
+    public let objectType: String?
+    public let objectIndex: Int?
+    public let objectID: String?
+    public let parameter: String?
+
+    public init(
+        api: String,
+        objectType: String? = nil,
+        objectIndex: Int? = nil,
+        objectID: String? = nil,
+        parameter: String? = nil
+    ) {
+        self.api = api
+        self.objectType = objectType
+        self.objectIndex = objectIndex
+        self.objectID = objectID
+        self.parameter = parameter
+    }
+}
+
 // MARK: - Project wrapper
 
 public final class EpanetProject {
     private var handle: UnsafeMutableRawPointer?
+
+    private func throwIfError(
+        _ err: Int32,
+        api: String,
+        objectType: String? = nil,
+        objectIndex: Int? = nil,
+        objectID: String? = nil,
+        parameter: String? = nil
+    ) throws {
+        if err == 0 { return }
+        throw EpanetError.apiContext(
+            code: err,
+            context: EpanetErrorContext(
+                api: api,
+                objectType: objectType,
+                objectIndex: objectIndex,
+                objectID: objectID,
+                parameter: parameter
+            )
+        )
+    }
 
     public init() {
         handle = _EN_createProject()
@@ -191,6 +280,14 @@ public final class EpanetProject {
         return String(cString: buf)
     }
 
+    public func getNodeIndex(id: String) throws -> Int {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        var index: Int32 = 0
+        let err = id.withCString { _EN_getNodeIndex($0, &index, h) }
+        if err != 0 { throw EpanetError.apiError(err) }
+        return Int(index)
+    }
+
     public func getLinkId(index: Int) throws -> String {
         guard let h = handle else { throw EpanetError.projectNotCreated }
         var buf = [CChar](repeating: 0, count: 256)
@@ -201,11 +298,25 @@ public final class EpanetProject {
         return String(cString: buf)
     }
 
+    public func getLinkIndex(id: String) throws -> Int {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        var index: Int32 = 0
+        let err = id.withCString { _EN_getLinkIndex($0, &index, h) }
+        if err != 0 { throw EpanetError.apiError(err) }
+        return Int(index)
+    }
+
     public func getNodeValue(nodeIndex: Int, param: NodeParams) throws -> Double {
         guard let h = handle else { throw EpanetError.projectNotCreated }
         var value: Double = 0
         let err = _EN_getNodeValue(Int32(nodeIndex), param.rawValue, &value, h)
-        if err != 0 { throw EpanetError.apiError(err) }
+        try throwIfError(
+            err,
+            api: "EN_getNodeValue",
+            objectType: "节点",
+            objectIndex: nodeIndex,
+            parameter: String(describing: param)
+        )
         return value
     }
 
@@ -219,7 +330,12 @@ public final class EpanetProject {
         guard let h = handle else { throw EpanetError.projectNotCreated }
         var n1: Int32 = 0, n2: Int32 = 0
         let err = _EN_getLinkNodes(Int32(linkIndex), &n1, &n2, h)
-        if err != 0 { throw EpanetError.apiError(err) }
+        try throwIfError(
+            err,
+            api: "EN_getLinkNodes",
+            objectType: "管段",
+            objectIndex: linkIndex
+        )
         return (Int(n1), Int(n2))
     }
 
@@ -227,7 +343,13 @@ public final class EpanetProject {
         guard let h = handle else { throw EpanetError.projectNotCreated }
         var value: Double = 0
         let err = _EN_getLinkValue(Int32(linkIndex), param.rawValue, &value, h)
-        if err != 0 { throw EpanetError.apiError(err) }
+        try throwIfError(
+            err,
+            api: "EN_getLinkValue",
+            objectType: "管段",
+            objectIndex: linkIndex,
+            parameter: String(describing: param)
+        )
         return value
     }
 
@@ -246,6 +368,140 @@ public final class EpanetProject {
         if err != 0 { throw EpanetError.apiError(err) }
         return LinkTypes(rawValue: t) ?? .pipe
     }
+
+    public func getOption(param: OptionParams) throws -> Double {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        var value: Double = 0
+        let err = _EN_getOption(param.rawValue, &value, h)
+        if err != 0 { throw EpanetError.apiError(err) }
+        return value
+    }
+
+    public func setOption(param: OptionParams, value: Double) throws {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        let err = _EN_setOption(param.rawValue, value, h)
+        if err != 0 { throw EpanetError.apiError(err) }
+    }
+
+    public func getTimeParam(param: TimeParams) throws -> Int {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        var value: CLong = 0
+        let err = _EN_getTimeParam(param.rawValue, &value, h)
+        if err != 0 { throw EpanetError.apiError(err) }
+        return Int(value)
+    }
+
+    public func setTimeParam(param: TimeParams, value: Int) throws {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        let err = _EN_setTimeParam(param.rawValue, Int32(value), h)
+        if err != 0 { throw EpanetError.apiError(err) }
+    }
+
+    public func getFlowUnits() throws -> Int {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        var units: Int32 = 0
+        let err = _EN_getFlowUnits(&units, h)
+        if err != 0 { throw EpanetError.apiError(err) }
+        return Int(units)
+    }
+
+    public static func describeError(code: Int32) -> String {
+        var buffer = [CChar](repeating: 0, count: 512)
+        let rc = buffer.withUnsafeMutableBufferPointer { ptr in
+            _EN_getError(code, ptr.baseAddress, Int32(ptr.count), nil)
+        }
+        if rc != 0 { return "未知错误" }
+        let message = String(cString: buffer).trimmingCharacters(in: .whitespacesAndNewlines)
+        return message.isEmpty ? "未知错误" : message
+    }
+
+    public func describeError(code: Int32) -> String {
+        guard let h = handle else { return Self.describeError(code: code) }
+        var buffer = [CChar](repeating: 0, count: 512)
+        let rc = buffer.withUnsafeMutableBufferPointer { ptr in
+            _EN_getError(code, ptr.baseAddress, Int32(ptr.count), h)
+        }
+        if rc != 0 { return "未知错误" }
+        let message = String(cString: buffer).trimmingCharacters(in: .whitespacesAndNewlines)
+        return message.isEmpty ? "未知错误" : message
+    }
+
+    public func setNodeValue(nodeIndex: Int, param: NodeParams, value: Double) throws {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        let err = _EN_setNodeValue(Int32(nodeIndex), param.rawValue, value, h)
+        try throwIfError(
+            err,
+            api: "EN_setNodeValue",
+            objectType: "节点",
+            objectIndex: nodeIndex,
+            parameter: String(describing: param)
+        )
+    }
+
+    public func setLinkValue(linkIndex: Int, param: LinkParams, value: Double) throws {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        let err = _EN_setLinkValue(Int32(linkIndex), param.rawValue, value, h)
+        try throwIfError(
+            err,
+            api: "EN_setLinkValue",
+            objectType: "管段",
+            objectIndex: linkIndex,
+            parameter: String(describing: param)
+        )
+    }
+
+    @discardableResult
+    public func createNode(id: String, type: NodeTypes) throws -> Int {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        let err = id.withCString { _EN_createNode($0, type.rawValue, h) }
+        try throwIfError(
+            err,
+            api: "EN_createNode",
+            objectType: "节点",
+            objectID: id,
+            parameter: String(describing: type)
+        )
+        return try getNodeIndex(id: id)
+    }
+
+    @discardableResult
+    public func createLink(id: String, type: LinkTypes, fromNodeIndex: Int, toNodeIndex: Int) throws -> Int {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        let err = id.withCString {
+            _EN_createLink($0, type.rawValue, Int32(fromNodeIndex), Int32(toNodeIndex), h)
+        }
+        try throwIfError(
+            err,
+            api: "EN_createLink",
+            objectType: "管段",
+            objectID: id,
+            parameter: "\(type) (\(fromNodeIndex)->\(toNodeIndex))"
+        )
+        return try getLinkIndex(id: id)
+    }
+
+    public func deleteNode(id: String) throws {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        let err = id.withCString { _EN_deleteNode($0, h) }
+        try throwIfError(
+            err,
+            api: "EN_deleteNode",
+            objectType: "节点",
+            objectID: id,
+            parameter: "删除前需无连接管段"
+        )
+    }
+
+    public func deleteLink(id: String) throws {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        let err = id.withCString { _EN_deleteLink($0, h) }
+        try throwIfError(
+            err,
+            api: "EN_deleteLink",
+            objectType: "管段",
+            objectID: id
+        )
+    }
 }
 
 // MARK: - One-shot run
@@ -263,7 +519,53 @@ public func runEpanet(inpPath: String, rptPath: String, outPath: String) throws 
 
 // MARK: - Error
 
-public enum EpanetError: Error {
+public enum EpanetError: Error, LocalizedError {
     case projectNotCreated
     case apiError(Int32)
+    case apiContext(code: Int32, context: EpanetErrorContext)
+
+    public var code: Int32? {
+        switch self {
+        case .projectNotCreated:
+            return nil
+        case .apiError(let code):
+            return code
+        case .apiContext(let code, _):
+            return code
+        }
+    }
+
+    public var context: EpanetErrorContext? {
+        switch self {
+        case .apiContext(_, let context):
+            return context
+        default:
+            return nil
+        }
+    }
+
+    public var errorDescription: String? {
+        switch self {
+        case .projectNotCreated:
+            return "EPANET 项目未创建"
+        case .apiError(let code):
+            return "EPANET 错误 \(code): \(EpanetProject.describeError(code: code))"
+        case .apiContext(let code, let context):
+            let base = "EPANET 错误 \(code): \(EpanetProject.describeError(code: code))"
+            let objectText: String
+            if let objectType = context.objectType {
+                if let objectID = context.objectID {
+                    objectText = "\(objectType)(ID=\(objectID))"
+                } else if let objectIndex = context.objectIndex {
+                    objectText = "\(objectType)(索引=\(objectIndex))"
+                } else {
+                    objectText = objectType
+                }
+            } else {
+                objectText = "未指定对象"
+            }
+            let parameterText = context.parameter.map { ", 参数=\($0)" } ?? ""
+            return "\(base) [接口=\(context.api), 对象=\(objectText)\(parameterText)]"
+        }
+    }
 }

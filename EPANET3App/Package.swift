@@ -24,6 +24,7 @@ let package = Package(
             publicHeadersPath: "include",
             cxxSettings: [
                 .headerSearchPath("."),
+                .headerSearchPath("include"),
                 .headerSearchPath("Core"),
                 .headerSearchPath("Elements"),
                 .headerSearchPath("Input"),

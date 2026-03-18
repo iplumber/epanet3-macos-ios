@@ -1,0 +1,197 @@
+
+<style>
+.ftab { width:100%; border-collapse:collapse; font-size:13px; }
+.ftab th { text-align:left; padding:8px 10px; font-weight:500; font-size:12px; color:var(--color-text-secondary); border-bottom:1px solid var(--color-border-tertiary); }
+.ftab td { padding:7px 10px; vertical-align:top; border-bottom:0.5px solid var(--color-border-tertiary); color:var(--color-text-primary); line-height:1.5; }
+.ftab tr:last-child td { border-bottom:none; }
+.grp { background:var(--color-background-secondary); }
+.grp td { font-weight:500; font-size:12px; color:var(--color-text-secondary); padding:10px 10px 4px; letter-spacing:.04em; }
+.mac { color:var(--color-text-info); font-size:12px; }
+.ios { color:#7F77DD; font-size:12px; }
+.tag { display:inline-block; font-size:11px; padding:1px 7px; border-radius:10px; margin-right:4px; }
+.t-m { background:var(--color-background-info); color:var(--color-text-info); }
+.t-i { background:#EEEDFE; color:#534AB7; }
+.t-s { background:var(--color-background-secondary); color:var(--color-text-secondary); border:0.5px solid var(--color-border-secondary); }
+.sect { padding:14px 10px 2px; font-size:13px; font-weight:500; color:var(--color-text-primary); border-bottom:0.5px solid var(--color-border-tertiary); }
+</style>
+<table class="ftab">
+<thead>
+<tr>
+  <th style="width:22%">功能项</th>
+  <th style="width:32%">功能描述</th>
+  <th style="width:23%">macOS 实现</th>
+  <th style="width:23%">iOS 实现</th>
+</tr>
+</thead>
+<tbody>
+
+<tr class="grp"><td colspan="4">— 文件管理</td></tr>
+<tr>
+  <td>新建 / 打开</td>
+  <td>新建空白管网；打开 .inp 文件；支持最近文件列表</td>
+  <td><span class="tag t-m">macOS</span>File 菜单 + ⌘N / ⌘O；支持拖拽到 Dock</td>
+  <td><span class="tag t-i">iOS</span>启动页选择；Files App 集成</td>
+</tr>
+<tr>
+  <td>保存 / 另存为</td>
+  <td>保存为 .inp 原生格式；另存为时可选格式</td>
+  <td><span class="tag t-m">macOS</span>⌘S / ⌘⇧S；iCloud Drive 自动同步</td>
+  <td><span class="tag t-i">iOS</span>导航栏按钮；Sheet 选择存储位置</td>
+</tr>
+<tr>
+  <td>导入 .inp</td>
+  <td>导入标准 .inp 文本格式并校验结构完整性</td>
+  <td colspan="2"><span class="tag t-s">共用</span>仅支持 .inp，统一解析器，两端相同体验</td>
+</tr>
+<tr>
+  <td>导出报告</td>
+  <td>导出 PDF 计算报告；含管网概览图 + 计算结果汇总表</td>
+  <td><span class="tag t-m">macOS</span>打印对话框 + 存为 PDF</td>
+  <td><span class="tag t-i">iOS</span>Share Sheet 分享 / 存档</td>
+</tr>
+
+<tr class="grp"><td colspan="4">— 管网对象（增删改查）</td></tr>
+<tr>
+  <td>添加对象</td>
+  <td>节点 / 水池 / 水库 / 管段 / 阀门 / 水泵六类对象</td>
+  <td><span class="tag t-m">macOS</span>工具栏选择对象类型，点击画布放置</td>
+  <td><span class="tag t-i">iOS</span>底部工具条选类型，点击/拖拽放置</td>
+</tr>
+<tr>
+  <td>编辑属性</td>
+  <td>选中对象后编辑全部水力属性；支持多选批量修改部分属性</td>
+  <td><span class="tag t-m">macOS</span>右侧 Inspector 侧边栏（常驻）</td>
+  <td><span class="tag t-i">iOS</span>点击对象弹出底部 Sheet（半屏/全屏）</td>
+</tr>
+<tr>
+  <td>移动 / 删除</td>
+  <td>拖动节点重新布局；Delete 键或菜单删除；关联管段自动处理</td>
+  <td><span class="tag t-m">macOS</span>拖拽 + Delete 键；右键菜单</td>
+  <td><span class="tag t-i">iOS</span>拖拽移动；长按 Context Menu 删除</td>
+</tr>
+<tr>
+  <td>查询 / 搜索</td>
+  <td>按 ID 或名称快速定位对象；高亮并居中显示</td>
+  <td><span class="tag t-m">macOS</span>⌘F 触发搜索框，结果列表点击跳转</td>
+  <td><span class="tag t-i">iOS</span>导航栏搜索按钮</td>
+</tr>
+<tr>
+  <td>管段绘制</td>
+  <td>点击起点节点，点击终点节点完成管段；支持折点</td>
+  <td><span class="tag t-m">macOS</span>点击起点→移动→点击终点；ESC 取消</td>
+  <td><span class="tag t-i">iOS</span>选管段工具→点击→点击；单指操作</td>
+</tr>
+
+<tr class="grp"><td colspan="4">— 视图控制</td></tr>
+<tr>
+  <td>缩放</td>
+  <td>连续缩放；快速适配全图；100% 原始比例</td>
+  <td><span class="tag t-m">macOS</span>滚轮缩放；⌘+ / ⌘-；⌘0 适配全图</td>
+  <td><span class="tag t-i">iOS</span>双指捏合；双击适配全图</td>
+</tr>
+<tr>
+  <td>平移</td>
+  <td>拖动画布平移视图</td>
+  <td><span class="tag t-m">macOS</span>空格+拖拽；或双指触控板滑动</td>
+  <td><span class="tag t-i">iOS</span>单指拖拽（非选中状态）</td>
+</tr>
+<tr>
+  <td>全屏</td>
+  <td>最大化画布区域，隐藏辅助面板</td>
+  <td><span class="tag t-m">macOS</span>系统全屏按钮；⌃⌘F</td>
+  <td><span class="tag t-i">iOS</span>横屏时自动扩展；隐藏底部栏按钮</td>
+</tr>
+
+<tr class="grp"><td colspan="4">— 显示样式</td></tr>
+<tr>
+  <td>图例设置</td>
+  <td>定义压力 / 流量等结果的颜色分级区间；可自定义分段数和色带</td>
+  <td colspan="2"><span class="tag t-s">共用</span>图例面板；实时预览色带变化</td>
+</tr>
+<tr>
+  <td>对象样式</td>
+  <td>节点半径 / 管段线宽 / 颜色可单独或按类型统一设置</td>
+  <td><span class="tag t-m">macOS</span>Inspector 内样式区域</td>
+  <td><span class="tag t-i">iOS</span>属性 Sheet 内样式折叠区</td>
+</tr>
+<tr>
+  <td>文字标注</td>
+  <td>控制显示 ID / 名称 / 高程 / 计算结果值等叠加标注；按缩放级别自动显隐</td>
+  <td colspan="2"><span class="tag t-s">共用</span>视图菜单 / 工具栏 Toggle 按钮</td>
+</tr>
+<tr>
+  <td>背景图层</td>
+  <td>（可选）加载本地图片或在线底图作为参考背景</td>
+  <td colspan="2"><span class="tag t-s">共用</span>图层面板控制透明度与显隐；v1.0 可推迟</td>
+</tr>
+
+<tr class="grp"><td colspan="4">— 参数设定</td></tr>
+<tr>
+  <td>单位制</td>
+  <td>SI（L/s·m·kPa）或 US 惯用单位（GPM·ft·psi）全局切换；所有输入输出实时换算</td>
+  <td colspan="2"><span class="tag t-s">共用</span>设置窗口顶部，切换时提示重新验证数值</td>
+</tr>
+<tr>
+  <td>水力参数</td>
+  <td>最大迭代次数；收敛精度（水头/流量）；压降单位；粘度温度修正</td>
+  <td><span class="tag t-m">macOS</span>偏好设置窗口 → 水力标签页</td>
+  <td><span class="tag t-i">iOS</span>设置 → 水力参数 Sheet</td>
+</tr>
+<tr>
+  <td>水损公式</td>
+  <td>Hazen-Williams / Darcy-Weisbach / Chezy-Manning 三选一</td>
+  <td colspan="2"><span class="tag t-s">共用</span>计算参数面板内 Segmented Control</td>
+</tr>
+<tr>
+  <td>模拟时长</td>
+  <td>稳态（Steady State）或时变模拟（EPS）；设定总时长、水力步长、报告步长</td>
+  <td colspan="2"><span class="tag t-s">共用</span>计算面板；稳态下时间项自动折叠</td>
+</tr>
+
+<tr class="grp"><td colspan="4">— 运行计算</td></tr>
+<tr>
+  <td>执行计算</td>
+  <td>一键触发；后台线程运行，不阻塞 UI；进度指示</td>
+  <td><span class="tag t-m">macOS</span>工具栏「运行」按钮 + ⌘R；状态栏进度</td>
+  <td><span class="tag t-i">iOS</span>底部主按钮；运行中显示 Activity Indicator</td>
+</tr>
+<tr>
+  <td>成功提示</td>
+  <td>计算完成：显示用时、迭代次数，结果自动叠加到画布</td>
+  <td><span class="tag t-m">macOS</span>状态栏绿色标记 + Toast</td>
+  <td><span class="tag t-i">iOS</span>顶部短暂 Banner</td>
+</tr>
+<tr>
+  <td>错误报告</td>
+  <td>网络不连通 / 负压 / 不收敛等错误；精确定位到问题对象；区分警告与错误</td>
+  <td><span class="tag t-m">macOS</span>错误面板列表；点击条目高亮定位对象</td>
+  <td><span class="tag t-i">iOS</span>Sheet 弹出错误列表；同样支持点击定位</td>
+</tr>
+
+<tr class="grp"><td colspan="4">— 结果查看</td></tr>
+<tr>
+  <td>图形渲染结果</td>
+  <td>压力 / 流量 / 流速 / 水头等结果以色带热力图叠加在管网图上</td>
+  <td colspan="2"><span class="tag t-s">共用</span>图例面板切换结果变量；实时重渲染</td>
+</tr>
+<tr>
+  <td>对象结果查看</td>
+  <td>点击单个节点 / 管段查看所有计算结果数值</td>
+  <td><span class="tag t-m">macOS</span>Inspector 下方结果区域</td>
+  <td><span class="tag t-i">iOS</span>属性 Sheet 结果标签页</td>
+</tr>
+<tr>
+  <td>时序图表（EPS）</td>
+  <td>时变模拟结果：对象某属性随时间变化的折线图；支持多对象叠加对比</td>
+  <td><span class="tag t-m">macOS</span>独立图表窗口（可并排）</td>
+  <td><span class="tag t-i">iOS</span>全屏 Sheet 内图表；可手势滑动时间轴</td>
+</tr>
+<tr>
+  <td>结果汇总表</td>
+  <td>节点/管段全量结果的可排序表格；支持复制到剪贴板</td>
+  <td><span class="tag t-m">macOS</span>结果面板标签页，可调整列宽</td>
+  <td><span class="tag t-i">iOS</span>Sheet 内横屏优化表格</td>
+</tr>
+
+</tbody>
+</table>

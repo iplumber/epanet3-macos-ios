@@ -116,4 +116,7 @@ class FileError : public ENerror
     FileError(int type);
 };
 
+// Returns a standardized error message for an EPANET error code.
+const char* EN_errorMessage(int code);
+
 #endif

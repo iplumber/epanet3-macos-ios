@@ -42,10 +42,18 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
         var onSelect: ((Int?, Int?) -> Void)?
         var lineBuffer: MTLBuffer?
         var pointBuffer: MTLBuffer?
+        var lineScalarBuffer: MTLBuffer?
+        var pointScalarBuffer: MTLBuffer?
         var lineCount: Int = 0
         var pointCount: Int = 0
+        var nodeScalars: [Float]?
+        var linkScalars: [Float]?
+        var nodeScalarRange: (Float, Float)?
+        var linkScalarRange: (Float, Float)?
         var pipelineState: MTLRenderPipelineState?
         var linePipeline: MTLRenderPipelineState?
+        var lineScalarPipeline: MTLRenderPipelineState?
+        var pointScalarPipeline: MTLRenderPipelineState?
         var lineHighlightPipeline: MTLRenderPipelineState?
         var pointHighlightPipeline: MTLRenderPipelineState?
 
@@ -56,31 +64,59 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
     static let metalSource = """
         #include <metal_stdlib>
         using namespace metal;
-        struct VertexOut { float4 pos [[position]]; };
-        struct PointOut { float4 pos [[position]]; float point_size [[point_size]]; };
-        vertex VertexOut vertex_line(constant float *uniforms [[buffer(0)]], constant float *verts [[buffer(1)]], uint vid [[vertex_id]]) {
+        struct VertexOut { float4 pos [[position]]; float scalar; };
+        struct PointOut { float4 pos [[position]]; float point_size [[point_size]]; float scalar; };
+        float3 colorMap(float t) {
+            t = clamp(t, 0.0, 1.0);
+            return float3(t, 0.2, 1.0 - t); // blue -> red
+        }
+        vertex VertexOut vertex_line_plain(constant float *uniforms [[buffer(0)]], constant float *verts [[buffer(1)]], uint vid [[vertex_id]]) {
             float scaleX=uniforms[0], scaleY=uniforms[1], offX=uniforms[2], offY=uniforms[3];
             float x=verts[vid*2], y=verts[vid*2+1];
-            VertexOut o; o.pos = float4(x*scaleX+offX, y*scaleY+offY, 0, 1); return o;
+            VertexOut o; o.pos = float4(x*scaleX+offX, y*scaleY+offY, 0, 1); o.scalar = 0.0; return o;
+        }
+        vertex VertexOut vertex_line_scalar(constant float *uniforms [[buffer(0)]], constant float *verts [[buffer(1)]], constant float *vals [[buffer(2)]], uint vid [[vertex_id]]) {
+            float scaleX=uniforms[0], scaleY=uniforms[1], offX=uniforms[2], offY=uniforms[3];
+            float x=verts[vid*2], y=verts[vid*2+1];
+            VertexOut o; o.pos = float4(x*scaleX+offX, y*scaleY+offY, 0, 1); o.scalar = vals[vid/2]; return o;
         }
         fragment float4 fragment_line(VertexOut in [[stage_in]]) { return float4(0.2, 0.4, 0.7, 1); }
+        fragment float4 fragment_line_scalar(VertexOut in [[stage_in]], constant float *range [[buffer(0)]]) {
+            float lo = range[0], hi = range[1];
+            float t = (hi > lo) ? ((in.scalar - lo) / (hi - lo)) : 0.5;
+            float3 c = colorMap(t);
+            return float4(c, 1);
+        }
         fragment float4 fragment_highlight_line(VertexOut in [[stage_in]]) { return float4(0.9, 0.45, 0.1, 1); }
-        vertex PointOut vertex_main(constant float *uniforms [[buffer(0)]], constant float *verts [[buffer(1)]], uint vid [[vertex_id]]) {
+        vertex PointOut vertex_main_plain(constant float *uniforms [[buffer(0)]], constant float *verts [[buffer(1)]], uint vid [[vertex_id]]) {
             float scaleX=uniforms[0], scaleY=uniforms[1], offX=uniforms[2], offY=uniforms[3];
             float x=verts[vid*2], y=verts[vid*2+1];
-            PointOut o; o.pos = float4(x*scaleX+offX, y*scaleY+offY, 0, 1); o.point_size = 6.0; return o;
+            PointOut o; o.pos = float4(x*scaleX+offX, y*scaleY+offY, 0, 1); o.point_size = 6.0; o.scalar = 0.0; return o;
+        }
+        vertex PointOut vertex_main_scalar(constant float *uniforms [[buffer(0)]], constant float *verts [[buffer(1)]], constant float *vals [[buffer(2)]], uint vid [[vertex_id]]) {
+            float scaleX=uniforms[0], scaleY=uniforms[1], offX=uniforms[2], offY=uniforms[3];
+            float x=verts[vid*2], y=verts[vid*2+1];
+            PointOut o; o.pos = float4(x*scaleX+offX, y*scaleY+offY, 0, 1); o.point_size = 6.0; o.scalar = vals[vid]; return o;
         }
         fragment float4 fragment_main(PointOut in [[stage_in]]) { return float4(0.1, 0.2, 0.5, 1); }
+        fragment float4 fragment_main_scalar(PointOut in [[stage_in]], constant float *range [[buffer(0)]]) {
+            float lo = range[0], hi = range[1];
+            float t = (hi > lo) ? ((in.scalar - lo) / (hi - lo)) : 0.5;
+            float3 c = colorMap(t);
+            return float4(c, 1);
+        }
         fragment float4 fragment_highlight_point(PointOut in [[stage_in]]) { return float4(0.9, 0.45, 0.1, 1); }
         """
 
         func buildPipelines(device: MTLDevice) {
             guard pipelineState == nil else { return }
             let library = try? device.makeLibrary(source: Self.metalSource, options: nil)
-            let vert = library?.makeFunction(name: "vertex_main")
+            let vert = library?.makeFunction(name: "vertex_main_plain")
             let frag = library?.makeFunction(name: "fragment_main")
-            let vertLine = library?.makeFunction(name: "vertex_line")
+            let vertLine = library?.makeFunction(name: "vertex_line_plain")
             let fragLine = library?.makeFunction(name: "fragment_line")
+            let vertLineScalar = library?.makeFunction(name: "vertex_line_scalar")
+            let vertPointScalar = library?.makeFunction(name: "vertex_main_scalar")
             let pipelineDesc = MTLRenderPipelineDescriptor()
             pipelineDesc.vertexFunction = vert
             pipelineDesc.fragmentFunction = frag
@@ -91,6 +127,12 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             lineDesc.fragmentFunction = fragLine
             lineDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
             linePipeline = try? device.makeRenderPipelineState(descriptor: lineDesc)
+            let fragLineScalar = library?.makeFunction(name: "fragment_line_scalar")
+            let lineScalarDesc = MTLRenderPipelineDescriptor()
+            lineScalarDesc.vertexFunction = vertLineScalar
+            lineScalarDesc.fragmentFunction = fragLineScalar
+            lineScalarDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+            lineScalarPipeline = try? device.makeRenderPipelineState(descriptor: lineScalarDesc)
             let fragLineHi = library?.makeFunction(name: "fragment_highlight_line")
             let lineHiDesc = MTLRenderPipelineDescriptor()
             lineHiDesc.vertexFunction = vertLine
@@ -103,6 +145,12 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             pointHiDesc.fragmentFunction = fragPointHi
             pointHiDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
             pointHighlightPipeline = try? device.makeRenderPipelineState(descriptor: pointHiDesc)
+            let fragPointScalar = library?.makeFunction(name: "fragment_main_scalar")
+            let pointScalarDesc = MTLRenderPipelineDescriptor()
+            pointScalarDesc.vertexFunction = vertPointScalar
+            pointScalarDesc.fragmentFunction = fragPointScalar
+            pointScalarDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+            pointScalarPipeline = try? device.makeRenderPipelineState(descriptor: pointScalarDesc)
         }
 
         public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -122,10 +170,20 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             if lineVerts.count > 0 {
                 lineBuffer = device.makeBuffer(bytes: lineVerts, length: lineVerts.count * MemoryLayout<Float>.stride, options: .storageModeShared)
                 lineCount = scene.links.count
+                if let linkScalars = linkScalars, linkScalars.count == lineCount {
+                    lineScalarBuffer = device.makeBuffer(bytes: linkScalars, length: linkScalars.count * MemoryLayout<Float>.stride, options: .storageModeShared)
+                } else {
+                    lineScalarBuffer = nil
+                }
             }
             if pointVerts.count > 0 {
                 pointBuffer = device.makeBuffer(bytes: pointVerts, length: pointVerts.count * MemoryLayout<Float>.stride, options: .storageModeShared)
                 pointCount = scene.nodes.count
+                if let nodeScalars = nodeScalars, nodeScalars.count == pointCount {
+                    pointScalarBuffer = device.makeBuffer(bytes: nodeScalars, length: nodeScalars.count * MemoryLayout<Float>.stride, options: .storageModeShared)
+                } else {
+                    pointScalarBuffer = nil
+                }
             }
 
             // Viewport: full size. XY 比例一致 — 同一场景单位在 X/Y 方向映射到相同像素长度，不拉变形
@@ -156,18 +214,41 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
 
             // Line width 1 (default); point size 6 so node radius = 3× line width
             // Draw lines
-            if let linePipeline = linePipeline, let buf = lineBuffer, lineCount > 0 {
-                enc.setRenderPipelineState(linePipeline)
+            if let buf = lineBuffer, lineCount > 0 {
                 var uniforms: [Float] = [scaleX, scaleYVal, offX, offY]
+                // Always clear optional scalar buffer binding to avoid stale GPU pointers
+                // when toggling overlay modes across frames/scenes.
+                enc.setVertexBuffer(nil, offset: 0, index: 2)
+                if let lineScalarPipeline = lineScalarPipeline,
+                   let scalarBuf = lineScalarBuffer,
+                   let range = linkScalarRange {
+                    enc.setRenderPipelineState(lineScalarPipeline)
+                    var r: [Float] = [range.0, range.1]
+                    enc.setFragmentBytes(&r, length: 8, index: 0)
+                    enc.setVertexBuffer(scalarBuf, offset: 0, index: 2)
+                } else if let linePipeline = linePipeline {
+                    enc.setRenderPipelineState(linePipeline)
+                }
                 enc.setVertexBytes(&uniforms, length: 16, index: 0)
                 enc.setVertexBuffer(buf, offset: 0, index: 1)
                 enc.drawPrimitives(type: .line, vertexStart: 0, vertexCount: lineCount * 2)
             }
 
             // Draw points
-            if let pipelineState = pipelineState, let buf = pointBuffer, pointCount > 0 {
-                enc.setRenderPipelineState(pipelineState)
+            if let buf = pointBuffer, pointCount > 0 {
                 var uniforms: [Float] = [scaleX, scaleYVal, offX, offY]
+                // Always clear optional scalar buffer binding to avoid stale GPU pointers.
+                enc.setVertexBuffer(nil, offset: 0, index: 2)
+                if let pointScalarPipeline = pointScalarPipeline,
+                   let scalarBuf = pointScalarBuffer,
+                   let range = nodeScalarRange {
+                    enc.setRenderPipelineState(pointScalarPipeline)
+                    var r: [Float] = [range.0, range.1]
+                    enc.setFragmentBytes(&r, length: 8, index: 0)
+                    enc.setVertexBuffer(scalarBuf, offset: 0, index: 2)
+                } else if let pipelineState = pipelineState {
+                    enc.setRenderPipelineState(pipelineState)
+                }
                 enc.setVertexBytes(&uniforms, length: 16, index: 0)
                 enc.setVertexBuffer(buf, offset: 0, index: 1)
                 enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: pointCount)
@@ -444,19 +525,27 @@ public struct MetalNetworkView: NSViewRepresentable {
     let panY: CGFloat
     let selectedNodeIndex: Int?
     let selectedLinkIndex: Int?
+    let nodeScalars: [Float]?
+    let linkScalars: [Float]?
+    let nodeScalarRange: (Float, Float)?
+    let linkScalarRange: (Float, Float)?
     let onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)?
     let onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)?
     let onPressEscape: (() -> Void)?
     let onMouseMove: (((Float, Float)?) -> Void)?
     let onSelect: ((Int?, Int?) -> Void)?
 
-    public init(scene: NetworkScene?, scale: CGFloat = 1, panX: CGFloat = 0, panY: CGFloat = 0, selectedNodeIndex: Int? = nil, selectedLinkIndex: Int? = nil, onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)? = nil, onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)? = nil, onPressEscape: (() -> Void)? = nil, onMouseMove: (((Float, Float)?) -> Void)? = nil, onSelect: ((Int?, Int?) -> Void)? = nil) {
+    public init(scene: NetworkScene?, scale: CGFloat = 1, panX: CGFloat = 0, panY: CGFloat = 0, selectedNodeIndex: Int? = nil, selectedLinkIndex: Int? = nil, nodeScalars: [Float]? = nil, linkScalars: [Float]? = nil, nodeScalarRange: (Float, Float)? = nil, linkScalarRange: (Float, Float)? = nil, onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)? = nil, onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)? = nil, onPressEscape: (() -> Void)? = nil, onMouseMove: (((Float, Float)?) -> Void)? = nil, onSelect: ((Int?, Int?) -> Void)? = nil) {
         self.scene = scene
         self.scale = scale
         self.panX = panX
         self.panY = panY
         self.selectedNodeIndex = selectedNodeIndex
         self.selectedLinkIndex = selectedLinkIndex
+        self.nodeScalars = nodeScalars
+        self.linkScalars = linkScalars
+        self.nodeScalarRange = nodeScalarRange
+        self.linkScalarRange = linkScalarRange
         self.onScrollWheel = onScrollWheel
         self.onPanDelta = onPanDelta
         self.onPressEscape = onPressEscape
@@ -486,6 +575,10 @@ public struct MetalNetworkView: NSViewRepresentable {
         context.coordinator.panY = panY
         context.coordinator.selectedNodeIndex = selectedNodeIndex
         context.coordinator.selectedLinkIndex = selectedLinkIndex
+        context.coordinator.nodeScalars = nodeScalars
+        context.coordinator.linkScalars = linkScalars
+        context.coordinator.nodeScalarRange = nodeScalarRange
+        context.coordinator.linkScalarRange = linkScalarRange
         container.addSubview(mtkView)
         mtkView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -503,6 +596,10 @@ public struct MetalNetworkView: NSViewRepresentable {
         context.coordinator.panY = panY
         context.coordinator.selectedNodeIndex = selectedNodeIndex
         context.coordinator.selectedLinkIndex = selectedLinkIndex
+        context.coordinator.nodeScalars = nodeScalars
+        context.coordinator.linkScalars = linkScalars
+        context.coordinator.nodeScalarRange = nodeScalarRange
+        context.coordinator.linkScalarRange = linkScalarRange
         context.coordinator.onSelect = onSelect
         (container as? ScrollableContainerView)?.onScrollWheel = onScrollWheel
         (container as? ScrollableContainerView)?.onPanDelta = onPanDelta
@@ -521,19 +618,27 @@ public struct MetalNetworkView: UIViewRepresentable {
     let panY: CGFloat
     let selectedNodeIndex: Int?
     let selectedLinkIndex: Int?
+    let nodeScalars: [Float]?
+    let linkScalars: [Float]?
+    let nodeScalarRange: (Float, Float)?
+    let linkScalarRange: (Float, Float)?
     let onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)?
     let onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)?
     let onPressEscape: (() -> Void)?
     let onMouseMove: (((Float, Float)?) -> Void)?
     let onSelect: ((Int?, Int?) -> Void)?
 
-    public init(scene: NetworkScene?, scale: CGFloat = 1, panX: CGFloat = 0, panY: CGFloat = 0, selectedNodeIndex: Int? = nil, selectedLinkIndex: Int? = nil, onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)? = nil, onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)? = nil, onPressEscape: (() -> Void)? = nil, onMouseMove: (((Float, Float)?) -> Void)? = nil, onSelect: ((Int?, Int?) -> Void)? = nil) {
+    public init(scene: NetworkScene?, scale: CGFloat = 1, panX: CGFloat = 0, panY: CGFloat = 0, selectedNodeIndex: Int? = nil, selectedLinkIndex: Int? = nil, nodeScalars: [Float]? = nil, linkScalars: [Float]? = nil, nodeScalarRange: (Float, Float)? = nil, linkScalarRange: (Float, Float)? = nil, onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)? = nil, onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)? = nil, onPressEscape: (() -> Void)? = nil, onMouseMove: (((Float, Float)?) -> Void)? = nil, onSelect: ((Int?, Int?) -> Void)? = nil) {
         self.scene = scene
         self.scale = scale
         self.panX = panX
         self.panY = panY
         self.selectedNodeIndex = selectedNodeIndex
         self.selectedLinkIndex = selectedLinkIndex
+        self.nodeScalars = nodeScalars
+        self.linkScalars = linkScalars
+        self.nodeScalarRange = nodeScalarRange
+        self.linkScalarRange = linkScalarRange
         self.onScrollWheel = onScrollWheel
         self.onPanDelta = onPanDelta
         self.onPressEscape = onPressEscape
@@ -555,6 +660,10 @@ public struct MetalNetworkView: UIViewRepresentable {
         context.coordinator.panY = panY
         context.coordinator.selectedNodeIndex = selectedNodeIndex
         context.coordinator.selectedLinkIndex = selectedLinkIndex
+        context.coordinator.nodeScalars = nodeScalars
+        context.coordinator.linkScalars = linkScalars
+        context.coordinator.nodeScalarRange = nodeScalarRange
+        context.coordinator.linkScalarRange = linkScalarRange
         context.coordinator.onSelect = onSelect
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(MetalNetworkCoordinator.handleTap(_:)))
         mtkView.addGestureRecognizer(tap)
@@ -568,6 +677,10 @@ public struct MetalNetworkView: UIViewRepresentable {
         context.coordinator.panY = panY
         context.coordinator.selectedNodeIndex = selectedNodeIndex
         context.coordinator.selectedLinkIndex = selectedLinkIndex
+        context.coordinator.nodeScalars = nodeScalars
+        context.coordinator.linkScalars = linkScalars
+        context.coordinator.nodeScalarRange = nodeScalarRange
+        context.coordinator.linkScalarRange = linkScalarRange
         context.coordinator.onSelect = onSelect
         mtkView.setNeedsDisplay(mtkView.bounds)
     }

@@ -45,7 +45,9 @@ enum NodeParams {
     EN_TANKVOLUME,   //24
 
     EN_ACTUALDEMAND, //25
-    EN_OUTFLOW};     //26
+    EN_OUTFLOW,      //26
+    EN_XCOORD,       //27
+    EN_YCOORD};      //28
 
 enum LinkParams {
     EN_DIAMETER,     //0
@@ -194,6 +196,7 @@ int        EN_writeReport(EN_Project p);
 int        EN_writeSummary(EN_Project p);
 int        EN_writeResults(int t, EN_Project p);
 int        EN_writeMsgLog(EN_Project p);
+int        EN_getError(int, char *, int, EN_Project);
 
 int        EN_getCount(int, int *, EN_Project);
 int        EN_getNodeIndex(char *, int *, EN_Project);
@@ -206,42 +209,40 @@ int        EN_getLinkId(int, char *, EN_Project);
 int        EN_getLinkType(int, int *, EN_Project);
 int        EN_getLinkNodes(int, int *, int *, EN_Project);
 int        EN_getLinkValue(int, int, double *, EN_Project);
+int        EN_getOption(int, double *, EN_Project);
+int        EN_getTimeParam(int, long *, EN_Project);
+int        EN_getFlowUnits(int *, EN_Project);
+int        EN_setTimeParam(int, int, EN_Project);
+int        EN_setOption(int, double, EN_Project);
+int        EN_setNodeValue(int, int, double, EN_Project);
+int        EN_setLinkValue(int, int, double, EN_Project);
+int        EN_createNode(char *, int, EN_Project);
+int        EN_createLink(char *, int, int, int, EN_Project);
+int        EN_deleteNode(char *, EN_Project);
+int        EN_deleteLink(char *, EN_Project);
 
 //==================================================================================
 /*        TO BE ADDED
-
-int       EN_getOption(int, double *, EN_Project);
-int       EN_getTimeParam(int, long *, EN_Project);
-int       EN_getFlowUnits(int *, EN_Project);
 int       EN_getPatternIndex(char *, int *, EN_Project);
 int       EN_getPatternId(int, char *, EN_Project);
 int       EN_getPatternPeriod(int, int*, EN_Project);
 int       EN_getPatternLen(int, int *,EN_Project);
 int       EN_getPatternValue(int, int, double *, EN_Project);
 int       EN_getQualModel(int *, EN_Project);
-int       EN_getError(int, char *, int, EN_Project);
 int       EN_getControl(int, int *, int *, double *, int *, double *, EN_Project);
 
 int       EN_setControl(int, int, int, double, int, double, EN_Project);
-int       EN_setNodeValue(int, int, double, EN_Project);
-int       EN_setLinkValue(int, int, double, EN_Project);
 int       EN_addPattern(char *, EN_Project);
 int       EN_setPattern(int, double *, int, EN_Project);
 int       EN_setPatternValue(int, int, double, EN_Project);
-int       EN_setTimeParam(int, int, EN_Project);
-int       EN_setOption(int, double, EN_Project);
 int       EN_setStatusReport(int, EN_Project);
 int       EN_setQualType(int, char *, char *, char *, EN_Project);
 
-int       EN_createNode(char *, int, EN_Project);
-int       EN_createLink(char *, int, int, int, EN_Project);
 int       EN_createCurve(char *, int, int, double *, double *, EN_Project);
 int       EN_createFixedPattern(char *, int, int, double *, EN_Project);
 int       EN_createVarPattern(char *, int, int *, double *, EN_Project);
 int       EN_createControl(char *, EN_Project);
 
-int       EN_deleteNode(char *, EN_Project);
-int       EN_deleteLink(char *, EN_Project);
 int       EN_deleteCurve(char *, EN_Project);
 int       EN_deletePattern(char *, EN_Project);
 */

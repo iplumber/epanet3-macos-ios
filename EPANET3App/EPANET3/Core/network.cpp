@@ -276,6 +276,52 @@ bool Network::addElement(Element::ElementType element, int type, string name)
 
 //-----------------------------------------------------------------------------
 
+int Network::deleteElement(Element::ElementType element, const string& name)
+{
+    if (element == Element::NODE)
+    {
+        auto it = nodeTable.find(name);
+        if (it == nodeTable.end()) return 205;
+        Node* node = static_cast<Node*>(it->second);
+
+        // Reject node deletion when connected links still exist.
+        for (Link* link : links)
+        {
+            if (link->fromNode == node || link->toNode == node) return 208;
+        }
+
+        int idx = node->index;
+        node->~Node();
+        nodes.erase(nodes.begin() + idx);
+        nodeTable.erase(it);
+        for (int i = idx; i < (int)nodes.size(); i++)
+        {
+            nodes[i]->index = i;
+        }
+        return 0;
+    }
+
+    if (element == Element::LINK)
+    {
+        auto it = linkTable.find(name);
+        if (it == linkTable.end()) return 205;
+        Link* link = static_cast<Link*>(it->second);
+        int idx = link->index;
+        link->~Link();
+        links.erase(links.begin() + idx);
+        linkTable.erase(it);
+        for (int i = idx; i < (int)links.size(); i++)
+        {
+            links[i]->index = i;
+        }
+        return 0;
+    }
+
+    return 208;
+}
+
+//-----------------------------------------------------------------------------
+
 bool Network::createHeadLossModel()
 {
     if ( headLossModel ) delete headLossModel;

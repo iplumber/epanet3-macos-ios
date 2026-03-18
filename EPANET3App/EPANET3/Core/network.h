@@ -50,6 +50,7 @@ class Network
 
     // Adds an element to the network
     bool          addElement(Element::ElementType eType, int subType, std::string name);
+    int           deleteElement(Element::ElementType eType, const std::string& name);
 
     // Finds element counts by type and index by id name
     int           count(Element::ElementType eType);
