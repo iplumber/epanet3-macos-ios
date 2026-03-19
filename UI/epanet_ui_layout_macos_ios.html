@@ -1,0 +1,71 @@
+
+<style>
+body { margin:0; }
+.wrap { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:4px 0; }
+.platform { border:0.5px solid var(--color-border-tertiary); border-radius:var(--border-radius-lg); overflow:hidden; }
+.plabel { font-size:12px; font-weight:500; color:var(--color-text-secondary); padding:8px 12px 6px; border-bottom:0.5px solid var(--color-border-tertiary); }
+.mocksvg { width:100%; display:block; }
+.frow { font-size:12px; color:var(--color-text-primary); padding:6px 12px; border-bottom:0.5px solid var(--color-border-tertiary); line-height:1.6; }
+.frow:last-child { border-bottom:none; }
+.frow b { font-weight:500; }
+.frow span { color:var(--color-text-secondary); font-size:11px; }
+</style>
+<div class="wrap">
+
+<div class="platform">
+<div class="plabel">macOS — 窗口布局</div>
+<svg class="mocksvg" viewBox="0 0 320 260">
+  <rect x="0" y="0" width="320" height="260" fill="var(--color-background-primary)"/>
+  <rect x="0" y="0" width="320" height="28" fill="var(--color-background-secondary)" stroke="var(--color-border-tertiary)" stroke-width="0.5"/>
+  <text style="font-size:9px;fill:var(--color-text-secondary)" x="10" y="18">菜单栏：文件  编辑  视图  管网  计算  帮助</text>
+  <rect x="0" y="28" width="320" height="36" fill="var(--color-background-secondary)" stroke="var(--color-border-tertiary)" stroke-width="0.5"/>
+  <text style="font-size:9px;fill:var(--color-text-secondary)" x="10" y="50">工具栏：[ 选择 ] [ 节点 ] [ 管段 ] [ 阀门 ] [ 水泵 ]  ⎯⎯  [ 运行 ▶ ]  [ 图例 ]</text>
+  <rect x="0" y="64" width="220" height="172" fill="var(--color-background-primary)" stroke="var(--color-border-tertiary)" stroke-width="0.5"/>
+  <text style="font-size:9px;fill:var(--color-text-tertiary)" x="110" y="155" text-anchor="middle">画布区域</text>
+  <text style="font-size:8px;fill:var(--color-text-tertiary)" x="110" y="168" text-anchor="middle">Metal 渲染 · 滚轮缩放</text>
+  <rect x="220" y="64" width="100" height="172" fill="var(--color-background-secondary)" stroke="var(--color-border-tertiary)" stroke-width="0.5"/>
+  <text style="font-size:9px;fill:var(--color-text-secondary)" x="270" y="84" text-anchor="middle">Inspector</text>
+  <rect x="228" y="92" width="84" height="16" rx="3" fill="var(--color-background-primary)" stroke="var(--color-border-tertiary)" stroke-width="0.5"/>
+  <text style="font-size:8px;fill:var(--color-text-tertiary)" x="270" y="104" text-anchor="middle">ID / 名称</text>
+  <rect x="228" y="114" width="84" height="16" rx="3" fill="var(--color-background-primary)" stroke="var(--color-border-tertiary)" stroke-width="0.5"/>
+  <text style="font-size:8px;fill:var(--color-text-tertiary)" x="270" y="126" text-anchor="middle">高程 / 需水量</text>
+  <rect x="228" y="136" width="84" height="16" rx="3" fill="var(--color-background-primary)" stroke="var(--color-border-tertiary)" stroke-width="0.5"/>
+  <text style="font-size:8px;fill:var(--color-text-tertiary)" x="270" y="148" text-anchor="middle">压力（结果）</text>
+  <text style="font-size:8px;fill:var(--color-text-tertiary)" x="270" y="172" text-anchor="middle">样式设置</text>
+  <rect x="0" y="236" width="320" height="24" fill="var(--color-background-secondary)" stroke="var(--color-border-tertiary)" stroke-width="0.5"/>
+  <text style="font-size:8px;fill:var(--color-text-secondary)" x="10" y="252">状态栏：节点 1024  管段 986  |  就绪</text>
+</svg>
+<div class="frow"><b>分区</b>：菜单栏 · 工具栏 · 画布 · 右侧 Inspector · 底部状态栏</div>
+<div class="frow"><b>Inspector</b> 常驻，选中对象实时刷新，不打断操作流 <span>（参考 Pixelmator Pro 风格）</span></div>
+<div class="frow"><b>计算面板</b>：独立浮动窗口或 Panel，不占主窗口空间</div>
+<div class="frow"><b>图表</b>：可独立窗口平铺，支持 macOS Stage Manager</div>
+</div>
+
+<div class="platform">
+<div class="plabel">iOS — 页面布局</div>
+<svg class="mocksvg" viewBox="0 0 160 260">
+  <rect x="0" y="0" width="160" height="260" fill="var(--color-background-primary)"/>
+  <rect x="0" y="0" width="160" height="44" fill="var(--color-background-secondary)" stroke="var(--color-border-tertiary)" stroke-width="0.5"/>
+  <text style="font-size:8px;fill:var(--color-text-secondary)" x="80" y="18" text-anchor="middle">导航栏</text>
+  <text style="font-size:8px;fill:var(--color-text-secondary)" x="14" y="32">≡</text>
+  <text style="font-size:8px;font-weight:500;fill:var(--color-text-primary)" x="80" y="32" text-anchor="middle">管网名称</text>
+  <text style="font-size:8px;fill:var(--color-text-info)" x="148" y="32" text-anchor="end">搜索</text>
+  <rect x="0" y="44" width="160" height="164" fill="var(--color-background-primary)" stroke="var(--color-border-tertiary)" stroke-width="0.5"/>
+  <text style="font-size:8px;fill:var(--color-text-tertiary)" x="80" y="126" text-anchor="middle">画布区域</text>
+  <text style="font-size:7px;fill:var(--color-text-tertiary)" x="80" y="138" text-anchor="middle">捏合缩放 · 单指平移</text>
+  <rect x="0" y="208" width="160" height="52" fill="var(--color-background-secondary)" stroke="var(--color-border-tertiary)" stroke-width="0.5"/>
+  <text style="font-size:7px;fill:var(--color-text-secondary)" x="20" y="226" text-anchor="middle">选</text>
+  <text style="font-size:7px;fill:var(--color-text-secondary)" x="46" y="226" text-anchor="middle">节点</text>
+  <text style="font-size:7px;fill:var(--color-text-secondary)" x="72" y="226" text-anchor="middle">管段</text>
+  <rect x="88" y="214" width="40" height="20" rx="4" fill="var(--color-background-info)"/>
+  <text style="font-size:7px;fill:var(--color-text-info);font-weight:500" x="108" y="228" text-anchor="middle">运行 ▶</text>
+  <text style="font-size:7px;fill:var(--color-text-secondary)" x="140" y="226" text-anchor="middle">更多</text>
+  <text style="font-size:7px;fill:var(--color-text-tertiary)" x="80" y="252" text-anchor="middle">底部安全区域</text>
+</svg>
+<div class="frow"><b>分区</b>：导航栏 · 全屏画布 · 底部工具条（Safe Area 上方）</div>
+<div class="frow"><b>属性编辑</b>：点击对象弹出底部 Sheet，半屏展示常用属性，上滑全屏 <span>（iOS 16 UISheetPresentationController）</span></div>
+<div class="frow"><b>参数设置</b>：进入独立设置页面，原生 Form 样式</div>
+<div class="frow"><b>横屏</b>：底部工具条改为左侧竖排，画布占满宽度</div>
+</div>
+
+</div>

@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EPANET 3 — iOS Light</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#ffffff;
+  --surface:#f2f2f7;
+  --surface2:#e5e5ea;
+  --surface3:#d1d1d6;
+  --border:rgba(0,0,0,.1);
+  --border2:rgba(0,0,0,.16);
+  --text:#000000;
+  --text2:rgba(0,0,0,.6);
+  --text3:rgba(0,0,0,.36);
+  --accent:#007aff;
+  --success:#34c759;
+  --success-dark:#1a8f3e;
+  --warn:#ff9500;
+  --danger:#ff3b30;
+  --node-j:#007aff;
+  --node-t:#34c759;
+  --node-r:#af52de;
+  --valve:#ff9500;
+  --pump:#ff6b35;
+  --font:'DM Sans',system-ui,-apple-system,sans-serif;
+  --mono:'DM Mono',monospace;
+}
+html,body{
+  width:100%;min-height:100vh;background:#e8e8ed;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font);padding:20px;gap:40px;flex-wrap:wrap;
+}
+
+.device{
+  width:390px;background:var(--bg);
+  border-radius:54px;overflow:hidden;
+  border:1px solid rgba(0,0,0,.12);
+  box-shadow:0 30px 80px rgba(0,0,0,.2),0 0 0 6px #d0d0d5,0 0 0 7px rgba(0,0,0,.12);
+  display:flex;flex-direction:column;
+}
+.device-label{text-align:center;font-size:12px;color:#888;margin-top:12px;font-family:var(--mono)}
+
+/* Status bar */
+.status-bar{
+  height:54px;padding:16px 28px 0;
+  display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+}
+.status-time{font-size:17px;font-weight:600;color:var(--text)}
+.status-icons{display:flex;align-items:center;gap:6px}
+.status-icons svg{width:16px;height:12px;fill:var(--text)}
+
+.island{width:120px;height:34px;background:#000;border-radius:20px;margin:8px auto;flex-shrink:0}
+
+/* Nav */
+.navbar{
+  height:52px;display:flex;align-items:center;
+  padding:0 20px;flex-shrink:0;
+  border-bottom:0.5px solid var(--border);
+  position:relative;background:rgba(255,255,255,.85);
+  backdrop-filter:blur(20px);
+}
+.nav-btn{width:36px;height:36px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:18px}
+.nav-title{position:absolute;left:50%;transform:translateX(-50%);font-size:17px;font-weight:600;color:var(--text);white-space:nowrap}
+.nav-action{color:var(--accent);font-size:15px;font-weight:500;cursor:pointer;margin-left:auto}
+
+/* Canvas */
+.canvas{flex:1;background:#f5f5f0;position:relative;overflow:hidden;min-height:460px}
+.canvas-grid{
+  position:absolute;inset:0;
+  background-image:
+    linear-gradient(rgba(0,0,0,.05) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,0,0,.05) 1px,transparent 1px);
+  background-size:32px 32px;
+}
+.net-svg{position:absolute;inset:0;width:100%;height:100%}
+
+/* Overlays */
+.zoom-badge{
+  position:absolute;top:12px;right:12px;
+  background:rgba(255,255,255,.88);border:0.5px solid var(--border2);
+  border-radius:8px;padding:4px 10px;
+  font-size:12px;color:var(--text2);font-family:var(--mono);
+  box-shadow:0 1px 6px rgba(0,0,0,.08);
+}
+.map-legend{
+  position:absolute;top:12px;left:12px;
+  background:rgba(255,255,255,.9);border:0.5px solid var(--border2);
+  border-radius:10px;padding:8px 10px;width:130px;
+  box-shadow:0 1px 8px rgba(0,0,0,.1);
+}
+.map-legend-title{font-size:11px;color:var(--text2);font-weight:500;margin-bottom:6px}
+.legend-bar{height:7px;border-radius:3.5px;background:linear-gradient(90deg,#ff3b30,#ff9500,#34c759,#007aff);margin-bottom:4px}
+.legend-labels{display:flex;justify-content:space-between;font-size:10px;color:var(--text3);font-family:var(--mono)}
+
+/* Callout */
+.callout{
+  position:absolute;
+  background:rgba(255,255,255,.96);border:0.5px solid var(--border2);
+  border-radius:12px;padding:8px 12px;
+  box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:110px;
+}
+.callout-id{font-size:12px;font-weight:600;color:var(--text);font-family:var(--mono)}
+.callout-val{font-size:13px;color:var(--success-dark);font-weight:500}
+.callout-sub{font-size:10px;color:var(--text3);margin-top:1px}
+.callout-arrow{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);width:12px;height:6px;background:rgba(255,255,255,.96);clip-path:polygon(0 0,100% 0,50% 100%)}
+
+/* Bottom toolbar */
+.bottom-tool{
+  background:rgba(249,249,251,.92);border-top:0.5px solid var(--border);
+  padding:10px 0 0;flex-shrink:0;backdrop-filter:blur(20px);
+}
+.tool-row{display:flex;align-items:center;padding:0 16px;gap:4px}
+.tool-btn{
+  flex:1;height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  border-radius:12px;cursor:pointer;border:none;background:transparent;color:var(--text3);transition:background .12s;
+}
+.tool-btn:active{background:var(--surface)}
+.tool-btn.active{color:var(--accent)}
+.tool-btn svg{width:22px;height:22px}
+.tool-btn-label{font-size:10px;font-weight:500}
+.run-btn{
+  background:var(--accent);border-radius:14px;height:50px;padding:0 18px;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  color:#fff;font-size:15px;font-weight:600;cursor:pointer;flex-shrink:0;
+  box-shadow:0 2px 8px rgba(0,122,255,.3);
+}
+.tool-sep{width:0.5px;height:36px;background:var(--border);margin:0 4px}
+.home-indicator{height:28px;display:flex;align-items:center;justify-content:center}
+.home-line{width:134px;height:5px;background:var(--text);border-radius:3px;opacity:.18}
+
+/* Sheet */
+.sheet-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3);display:flex;align-items:flex-end}
+.sheet{width:100%;background:var(--bg);border-radius:20px 20px 0 0;overflow:hidden;box-shadow:0 -4px 24px rgba(0,0,0,.12)}
+.sheet-handle{width:36px;height:5px;background:var(--surface3);border-radius:3px;margin:10px auto 0}
+.sheet-header{padding:16px 20px 12px;border-bottom:0.5px solid var(--border);display:flex;align-items:center}
+.sheet-title{font-size:17px;font-weight:600;color:var(--text);flex:1}
+.sheet-close{width:28px;height:28px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:15px}
+.seg-ctrl{display:flex;background:var(--surface);border-radius:9px;padding:2px;margin:12px 16px 0;border:0.5px solid var(--border)}
+.seg-item{flex:1;height:30px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;color:var(--text2);border-radius:7px;cursor:pointer}
+.seg-item.active{background:#fff;color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.1)}
+.sheet-body{padding:12px 0;max-height:260px;overflow-y:auto}
+.sheet-row{display:flex;align-items:center;padding:11px 20px;border-bottom:0.5px solid var(--border)}
+.sheet-row:last-child{border-bottom:none}
+.sheet-row-label{font-size:15px;color:var(--text);flex:1}
+.sheet-row-val{font-size:15px;color:var(--text3);font-family:var(--mono)}
+.sheet-row-val.result{color:var(--success-dark)}
+.sheet-row-val.editable{color:var(--accent)}
+.sheet-row-chevron{color:var(--surface3);margin-left:6px;font-size:14px}
+
+/* Time strip */
+.time-strip{
+  position:absolute;bottom:0;left:0;right:0;
+  background:rgba(249,249,251,.92);border-top:0.5px solid var(--border);
+  padding:10px 16px;backdrop-filter:blur(12px);
+}
+.time-label{font-size:11px;color:var(--text3);margin-bottom:6px;display:flex;justify-content:space-between}
+.time-slider{width:100%;height:4px;border-radius:2px;background:var(--surface2);-webkit-appearance:none;appearance:none;outline:none}
+.time-slider::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#fff;border:2px solid var(--accent);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+.time-steps{display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:var(--text3);font-family:var(--mono)}
+
+/* Banner */
+.banner{position:relative;background:rgba(52,199,89,.1);border-bottom:0.5px solid rgba(52,199,89,.3);padding:10px 16px;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--success-dark)}
+.banner-icon{width:16px;height:16px;border-radius:50%;background:var(--success);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+</style>
+</head>
+<body>
+
+<!-- Device 1: Main + Sheet -->
+<div>
+<div class="device">
+  <div class="status-bar">
+    <div class="status-time">9:41</div>
+    <div class="island"></div>
+    <div class="status-icons">
+      <svg viewBox="0 0 16 12"><path d="M8 2.5C10.5 2.5 12.7 3.5 14.2 5.2L15.5 3.9C13.6 1.8 10.9 0.5 8 0.5C5.1 0.5 2.4 1.8 0.5 3.9L1.8 5.2C3.3 3.5 5.5 2.5 8 2.5Z" opacity=".3"/><path d="M8 5.5C9.7 5.5 11.3 6.2 12.4 7.4L13.7 6.1C12.3 4.6 10.2 3.7 8 3.7C5.8 3.7 3.7 4.6 2.3 6.1L3.6 7.4C4.7 6.2 6.3 5.5 8 5.5Z" opacity=".55"/><path d="M8 8.5C9 8.5 9.9 8.9 10.6 9.6L11.9 8.3C10.8 7.3 9.5 6.7 8 6.7C6.5 6.7 5.2 7.3 4.1 8.3L5.4 9.6C6.1 8.9 7 8.5 8 8.5"/><circle cx="8" cy="11" r="1"/></svg>
+      <svg viewBox="0 0 25 12" style="width:25px"><rect x="0" y="1" width="21" height="10" rx="2.5" stroke="currentColor" stroke-width="1" fill="none" opacity=".35"/><rect x="1" y="2" width="16" height="8" rx="1.5" fill="currentColor"/><path d="M22 4v4a2 2 0 0 0 0-4Z" fill="currentColor" opacity=".35"/></svg>
+    </div>
+  </div>
+
+  <div class="navbar">
+    <div class="nav-btn">☰</div>
+    <div class="nav-title">北城区供水管网</div>
+    <div class="nav-action" style="margin-left:auto;font-size:20px">⌕</div>
+    <div class="nav-action" style="margin-left:12px;font-size:20px">···</div>
+  </div>
+
+  <div class="canvas">
+    <div class="canvas-grid"></div>
+    <svg class="net-svg" viewBox="0 0 390 470">
+      <!-- Base pipes -->
+      <g stroke="#c8c7c0" stroke-width="3" fill="none" stroke-linecap="round">
+        <line x1="50" y1="240" x2="160" y2="240"/>
+        <line x1="160" y1="240" x2="260" y2="240"/>
+        <line x1="260" y1="240" x2="350" y2="240"/>
+        <line x1="160" y1="240" x2="160" y2="140"/>
+        <line x1="260" y1="240" x2="260" y2="140"/>
+        <line x1="160" y1="240" x2="160" y2="340"/>
+        <line x1="260" y1="240" x2="260" y2="340"/>
+        <line x1="160" y1="140" x2="260" y2="140"/>
+        <line x1="160" y1="340" x2="260" y2="340"/>
+        <line x1="210" y1="140" x2="210" y2="80"/>
+        <line x1="210" y1="340" x2="210" y2="400"/>
+      </g>
+      <!-- Result colored -->
+      <g fill="none" stroke-linecap="round">
+        <line x1="50" y1="240" x2="160" y2="240" stroke="#34c759" stroke-width="3.5" opacity=".8"/>
+        <line x1="160" y1="240" x2="260" y2="240" stroke="#007aff" stroke-width="3" opacity=".7"/>
+        <line x1="260" y1="240" x2="350" y2="240" stroke="#ff9500" stroke-width="2.5" opacity=".7"/>
+        <line x1="160" y1="240" x2="160" y2="140" stroke="#34c759" stroke-width="2.5" opacity=".7"/>
+        <line x1="260" y1="240" x2="260" y2="140" stroke="#007aff" stroke-width="2.5" opacity=".65"/>
+        <line x1="160" y1="240" x2="160" y2="340" stroke="#34c759" stroke-width="2.5" opacity=".65"/>
+        <line x1="260" y1="240" x2="260" y2="340" stroke="#ff9500" stroke-width="2" opacity=".65"/>
+        <line x1="160" y1="140" x2="260" y2="140" stroke="#007aff" stroke-width="2" opacity=".6"/>
+        <line x1="160" y1="340" x2="260" y2="340" stroke="#007aff" stroke-width="2" opacity=".6"/>
+        <line x1="210" y1="140" x2="210" y2="80" stroke="#34c759" stroke-width="2" opacity=".6"/>
+        <line x1="210" y1="340" x2="210" y2="400" stroke="#ff9500" stroke-width="2" opacity=".6"/>
+      </g>
+      <!-- Reservoir -->
+      <g transform="translate(32,240)"><polygon points="0,-18 16,10 -16,10" fill="#af52de" opacity=".85"/><text x="0" y="-26" fill="#af52de" font-size="9" text-anchor="middle" font-family="DM Mono">R-01</text></g>
+      <!-- Tanks -->
+      <g transform="translate(210,80)"><rect x="-11" y="-11" width="22" height="22" rx="3" fill="#34c759" opacity=".8"/><rect x="-11" y="2" width="22" height="8" rx="0" fill="#34c759" opacity=".3"/><text x="0" y="-18" fill="#1a8f3e" font-size="9" text-anchor="middle" font-family="DM Mono">T-02</text></g>
+      <g transform="translate(350,240)"><rect x="-11" y="-11" width="22" height="22" rx="3" fill="#34c759" opacity=".75"/><rect x="-11" y="2" width="22" height="8" rx="0" fill="#34c759" opacity=".3"/><text x="0" y="-18" fill="#1a8f3e" font-size="9" text-anchor="middle" font-family="DM Mono">T-03</text></g>
+      <!-- Pump -->
+      <g transform="translate(100,240)"><circle cx="0" cy="0" r="9" fill="none" stroke="#ff6b35" stroke-width="2"/><path d="M-4 0l8-5v10z" fill="#ff6b35" opacity=".85"/><text x="0" y="18" fill="#ff6b35" font-size="9" text-anchor="middle">P-01</text></g>
+      <!-- Valve -->
+      <g transform="translate(310,240)"><circle cx="0" cy="0" r="8" fill="none" stroke="#ff9500" stroke-width="2"/><path d="M-5 0h10M0-5v10" stroke="#ff9500" stroke-width="1.5" stroke-linecap="round" fill="none"/><text x="0" y="18" fill="#ff9500" font-size="9" text-anchor="middle">PRV</text></g>
+      <!-- Selected node -->
+      <g transform="translate(160,240)"><circle cx="0" cy="0" r="16" fill="rgba(0,122,255,.1)" stroke="#007aff" stroke-width="1.5"/><circle cx="0" cy="0" r="7" fill="#007aff"/><text x="0" y="-24" fill="#007aff" font-size="10" text-anchor="middle" font-family="DM Mono" font-weight="500">J-142</text></g>
+      <!-- Other junctions -->
+      <g fill="#007aff">
+        <circle cx="260" cy="240" r="6" opacity=".85"/><text x="260" y="226" fill="#007aff" font-size="9" text-anchor="middle" font-family="DM Mono">J-143</text>
+        <circle cx="160" cy="140" r="5" opacity=".8"/>
+        <circle cx="260" cy="140" r="5" opacity=".8"/>
+        <circle cx="160" cy="340" r="5" opacity=".8"/>
+        <circle cx="260" cy="340" r="5" opacity=".8"/>
+        <circle cx="210" cy="400" r="4" opacity=".7"/>
+      </g>
+      <!-- Pressure labels -->
+      <g font-size="9" font-family="DM Mono" fill="#1a8f3e" opacity=".9">
+        <text x="170" y="236">42.6 m</text>
+        <text x="265" y="229">38.1 m</text>
+        <text x="165" y="132">44.8 m</text>
+      </g>
+    </svg>
+
+    <div class="callout" style="left:136px;top:170px">
+      <div class="callout-id">J-142</div>
+      <div class="callout-val">42.6 m 压力</div>
+      <div class="callout-sub">节点 · 高程 28.5 m</div>
+      <div class="callout-arrow"></div>
+    </div>
+    <div class="map-legend">
+      <div class="map-legend-title">节点压力 (m)</div>
+      <div class="legend-bar"></div>
+      <div class="legend-labels"><span>0</span><span>30</span><span>60+</span></div>
+    </div>
+    <div class="zoom-badge">100%</div>
+  </div>
+
+  <div class="bottom-tool">
+    <div class="tool-row">
+      <button class="tool-btn active">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M5 3l14 9-14 9V3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        <span class="tool-btn-label">选择</span>
+      </button>
+      <button class="tool-btn">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" fill="currentColor"/></svg>
+        <span class="tool-btn-label">节点</span>
+      </button>
+      <button class="tool-btn">
+        <svg viewBox="0 0 24 24" fill="none"><line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+        <span class="tool-btn-label">管段</span>
+      </button>
+      <div class="tool-sep"></div>
+      <div class="run-btn">
+        <svg style="width:16px;height:16px;fill:#fff" viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg>
+        运行
+      </div>
+      <div class="tool-sep"></div>
+      <button class="tool-btn">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8"/><rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8"/><rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8"/></svg>
+        <span class="tool-btn-label">更多</span>
+      </button>
+    </div>
+    <div class="home-indicator"><div class="home-line"></div></div>
+  </div>
+
+  <!-- Sheet (inline, below toolbar, simulates half-open state) -->
+  <div style="background:var(--bg);border-top:0.5px solid var(--border);">
+    <div style="width:36px;height:5px;background:var(--surface3);border-radius:3px;margin:10px auto 0;"></div>
+    <div style="padding:12px 20px 10px;border-bottom:0.5px solid var(--border);display:flex;align-items:center;">
+      <div>
+        <div style="font-size:12px;color:var(--accent);font-weight:500;margin-bottom:2px;">节点 Junction</div>
+        <div style="font-size:17px;font-weight:600;color:var(--text);">J-142</div>
+      </div>
+      <div style="width:28px;height:28px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:15px;margin-left:auto;">✕</div>
+    </div>
+    <div style="display:flex;background:var(--surface);border-radius:9px;padding:2px;margin:10px 16px 0;border:0.5px solid var(--border);">
+      <div style="flex:1;height:30px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;color:var(--text);border-radius:7px;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.1);">属性</div>
+      <div style="flex:1;height:30px;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--text2);border-radius:7px;">结果</div>
+      <div style="flex:1;height:30px;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--text2);border-radius:7px;">样式</div>
+    </div>
+    <div style="padding:8px 0;">
+      <div class="sheet-row"><div class="sheet-row-label">高程</div><div class="sheet-row-val editable">28.50 m</div><div class="sheet-row-chevron">›</div></div>
+      <div class="sheet-row"><div class="sheet-row-label">需水量</div><div class="sheet-row-val editable">4.20 L/s</div><div class="sheet-row-chevron">›</div></div>
+      <div class="sheet-row"><div class="sheet-row-label">需水模式</div><div class="sheet-row-val">日变化</div><div class="sheet-row-chevron">›</div></div>
+      <div class="sheet-row" style="background:rgba(52,199,89,.06);"><div class="sheet-row-label" style="color:#1a8f3e;">压力（结果）</div><div class="sheet-row-val result">42.6 m</div></div>
+      <div class="sheet-row" style="background:rgba(52,199,89,.06);border-bottom:none;"><div class="sheet-row-label" style="color:#1a8f3e;">水头（结果）</div><div class="sheet-row-val result">71.1 m</div></div>
+    </div>
+  </div>
+</div>
+<div class="device-label">主界面 · 节点属性 Sheet</div>
+</div>
+
+
+<!-- Device 2: Results -->
+<div>
+<div class="device">
+  <div class="status-bar">
+    <div class="status-time">9:41</div>
+    <div class="island"></div>
+    <div class="status-icons">
+      <svg viewBox="0 0 25 12" style="width:25px"><rect x="0" y="1" width="21" height="10" rx="2.5" stroke="currentColor" stroke-width="1" fill="none" opacity=".35"/><rect x="1" y="2" width="18" height="8" rx="1.5" fill="currentColor"/><path d="M22 4v4a2 2 0 0 0 0-4Z" fill="currentColor" opacity=".35"/></svg>
+    </div>
+  </div>
+
+  <div class="navbar">
+    <div style="color:var(--accent);font-size:16px;font-weight:500">‹ 返回</div>
+    <div class="nav-title">计算结果</div>
+    <div class="nav-action">导出</div>
+  </div>
+
+  <div class="banner">
+    <div class="banner-icon"><svg style="width:10px;height:10px;fill:#fff" viewBox="0 0 10 10"><path d="M2 5l2 2.5L8 2.5" stroke="#fff" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    计算成功 · 8 次迭代 · 用时 1.8 秒
+  </div>
+
+  <div class="canvas" style="min-height:340px;background:#f8f7f2">
+    <div class="canvas-grid"></div>
+    <svg class="net-svg" viewBox="0 0 390 360">
+      <g fill="none" stroke-linecap="round">
+        <line x1="50" y1="180" x2="150" y2="180" stroke="#34c759" stroke-width="5" opacity=".8"/>
+        <line x1="150" y1="180" x2="250" y2="180" stroke="#007aff" stroke-width="4.5" opacity=".75"/>
+        <line x1="250" y1="180" x2="340" y2="180" stroke="#ff9500" stroke-width="4" opacity=".75"/>
+        <line x1="150" y1="180" x2="150" y2="100" stroke="#34c759" stroke-width="4" opacity=".75"/>
+        <line x1="250" y1="180" x2="250" y2="100" stroke="#007aff" stroke-width="3.5" opacity=".7"/>
+        <line x1="150" y1="180" x2="150" y2="265" stroke="#34c759" stroke-width="3.5" opacity=".7"/>
+        <line x1="250" y1="180" x2="250" y2="265" stroke="#ff9500" stroke-width="3" opacity=".7"/>
+        <line x1="150" y1="100" x2="250" y2="100" stroke="#007aff" stroke-width="3" opacity=".65"/>
+        <line x1="150" y1="265" x2="250" y2="265" stroke="#007aff" stroke-width="3" opacity=".6"/>
+        <line x1="200" y1="100" x2="200" y2="50" stroke="#34c759" stroke-width="3" opacity=".65"/>
+        <line x1="200" y1="265" x2="200" y2="315" stroke="#ff3b30" stroke-width="2.5" opacity=".65"/>
+      </g>
+      <g transform="translate(30,180)"><polygon points="0,-16 14,9 -14,9" fill="#af52de" opacity=".85"/><text x="0" y="-22" fill="#af52de" font-size="8" text-anchor="middle" font-family="DM Mono">R-01</text></g>
+      <g transform="translate(200,50)"><rect x="-10" y="-10" width="20" height="20" rx="3" fill="#34c759" opacity=".85"/><text x="0" y="-16" fill="#1a8f3e" font-size="8" text-anchor="middle" font-family="DM Mono">T-02</text></g>
+      <g transform="translate(340,180)"><rect x="-10" y="-10" width="20" height="20" rx="3" fill="#34c759" opacity=".8"/><text x="0" y="-16" fill="#1a8f3e" font-size="8" text-anchor="middle" font-family="DM Mono">T-03</text></g>
+      <g>
+        <circle cx="150" cy="180" r="7" fill="#007aff"/><text x="158" y="176" fill="#007aff" font-size="9" font-family="DM Mono">42.6</text>
+        <circle cx="250" cy="180" r="6" fill="#007aff"/><text x="258" y="176" fill="#007aff" font-size="9" font-family="DM Mono">38.1</text>
+        <circle cx="150" cy="100" r="5" fill="#007aff"/><text x="158" y="96" fill="#007aff" font-size="9" font-family="DM Mono">44.8</text>
+        <circle cx="250" cy="100" r="5" fill="#007aff"/><text x="258" y="96" fill="#007aff" font-size="9" font-family="DM Mono">40.2</text>
+        <circle cx="150" cy="265" r="5" fill="#007aff"/><text x="158" y="261" fill="#007aff" font-size="9" font-family="DM Mono">39.5</text>
+        <circle cx="250" cy="265" r="5" fill="#ff9500"/><text x="258" y="261" fill="#ff9500" font-size="9" font-family="DM Mono">24.8</text>
+        <circle cx="200" cy="315" r="4" fill="#ff3b30"/><text x="208" y="311" fill="#ff3b30" font-size="9" font-family="DM Mono">12.1</text>
+      </g>
+    </svg>
+    <div class="map-legend">
+      <div class="map-legend-title">节点压力 (m)</div>
+      <div class="legend-bar"></div>
+      <div class="legend-labels"><span>0</span><span>30</span><span>60+</span></div>
+    </div>
+    <div class="zoom-badge">压力模式</div>
+    <div class="time-strip">
+      <div class="time-label"><span>模拟时间</span><span style="color:var(--accent);font-family:var(--mono)">08:00</span></div>
+      <input type="range" class="time-slider" min="0" max="24" value="8">
+      <div class="time-steps"><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>24h</span></div>
+    </div>
+  </div>
+
+  <!-- Summary cards -->
+  <div style="padding:12px 16px;background:var(--bg);border-top:0.5px solid var(--border)">
+    <div style="font-size:13px;font-weight:500;color:var(--text2);margin-bottom:10px">汇总统计</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <div style="background:var(--surface);border-radius:10px;padding:10px;text-align:center;border:0.5px solid var(--border)">
+        <div style="font-size:10px;color:var(--text3);margin-bottom:4px">最小压力</div>
+        <div style="font-size:17px;font-weight:600;color:var(--danger);font-family:var(--mono)">12.1</div>
+        <div style="font-size:10px;color:var(--text3)">m · J-199</div>
+      </div>
+      <div style="background:var(--surface);border-radius:10px;padding:10px;text-align:center;border:0.5px solid var(--border)">
+        <div style="font-size:10px;color:var(--text3);margin-bottom:4px">最大压力</div>
+        <div style="font-size:17px;font-weight:600;color:var(--success-dark);font-family:var(--mono)">68.4</div>
+        <div style="font-size:10px;color:var(--text3)">m · J-001</div>
+      </div>
+      <div style="background:var(--surface);border-radius:10px;padding:10px;text-align:center;border:0.5px solid var(--border)">
+        <div style="font-size:10px;color:var(--text3);margin-bottom:4px">不达标</div>
+        <div style="font-size:17px;font-weight:600;color:var(--warn);font-family:var(--mono)">3</div>
+        <div style="font-size:10px;color:var(--text3)">节点 &lt;14m</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bottom-tool">
+    <div class="tool-row">
+      <button class="tool-btn active">
+        <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.8"/><path d="M8 12h8M12 8v8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span class="tool-btn-label">地图</span>
+      </button>
+      <button class="tool-btn">
+        <svg viewBox="0 0 24 24" fill="none"><polyline points="4,18 8,12 12,15 16,8 20,11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="tool-btn-label">时序图</span>
+      </button>
+      <button class="tool-btn">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M3 9h18M8 5V3M16 5V3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span class="tool-btn-label">报告</span>
+      </button>
+      <div class="tool-sep"></div>
+      <button class="tool-btn">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M4 12v3a5 5 0 0 0 10 0v-3M9 3v9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 7l3-4 3 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="tool-btn-label">导出</span>
+      </button>
+    </div>
+    <div class="home-indicator"><div class="home-line"></div></div>
+  </div>
+</div>
+<div class="device-label">结果界面 · EPS 时变模拟</div>
+</div>
+
+</body>
+</html>

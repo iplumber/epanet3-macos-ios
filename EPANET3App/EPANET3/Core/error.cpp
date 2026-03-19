@@ -179,3 +179,57 @@ FileError::FileError(int type)
         msg =  FileErrorMsgs[type];
     }
 }
+
+//-----------------------------------------------------------------------------
+
+const char* EN_errorMessage(int code)
+{
+    switch (code)
+    {
+    case 0:   return "No error.";
+    case 101: return "Out of memory.";
+    case 102: return "No network data to analyze.";
+    case 103: return "Could not create a head loss model.";
+    case 104: return "Could not create a demand model.";
+    case 105: return "Could not create a leakage model.";
+    case 106: return "Could not create a quality model.";
+    case 107: return "Could not create a matrix solver.";
+    case 108: return "Hydraulic solver not opened.";
+    case 109: return "Quality solver not opened.";
+    case 110: return "Hydraulic solver failure.";
+    case 111: return "Quality solver failure.";
+    case 112: return "Solver not initialized.";
+
+    case 200: return "One or more errors in network input data.";
+    case 201: return "Cannot create object.";
+    case 202: return "Too few input items.";
+    case 203: return "Invalid keyword.";
+    case 204: return "Duplicate ID name.";
+    case 205: return "Undefined object.";
+    case 206: return "Invalid numeric value.";
+    case 207: return "Invalid time value.";
+    case 208: return "Unspecified input error.";
+
+    case 220: return "Illegal valve connection.";
+    case 223: return "Too few nodes in network.";
+    case 224: return "No fixed grade nodes in network.";
+    case 225: return "Invalid depth limits for tank.";
+    case 226: return "No pump curve supplied for pump.";
+    case 227: return "Invalid pump curve for pump.";
+    case 230: return "Invalid data for curve.";
+    case 231: return "Invalid volume curve for tank.";
+    case 233: return "No links connected to node.";
+
+    case 301: return "Duplicate file names.";
+    case 302: return "Cannot open input file.";
+    case 303: return "Cannot open report file.";
+    case 304: return "Cannot open output file.";
+    case 305: return "Cannot open hydraulics file.";
+    case 306: return "Incompatible hydraulics file.";
+    case 307: return "Cannot read hydraulics file.";
+    case 308: return "Cannot write to output file.";
+    case 309: return "Cannot write to report file.";
+    case 310: return "No results saved to report.";
+    default:  return "Unknown EPANET error code.";
+    }
+}

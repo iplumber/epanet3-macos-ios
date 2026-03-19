@@ -366,8 +366,9 @@ void OptionParser::parseReportOption(Network* network, vector<string>& tokenList
     string* tokens = &tokenList[0];
     string keyword = Utilities::upperCase(tokens[0]);
 
-    // ... PAGESIZE is deprecated
+    // ... PAGESIZE and Page are deprecated (EPANET 2 compatibility)
     if ( Utilities::match(keyword, "PAGESIZE") ) return;
+    if ( Utilities::match(keyword, "PAGE") ) return;
 
     // ... check if option is name of report file
     if ( Utilities::match(keyword, "FILE") )

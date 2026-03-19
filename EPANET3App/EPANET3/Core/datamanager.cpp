@@ -153,6 +153,14 @@ int DataManager::getNodeValue(int index, int param, double* value, Network* nw)
         *value = node->quality * ccf;
         break;
 
+    case EN_XCOORD:
+        *value = node->xCoord;
+        break;
+
+    case EN_YCOORD:
+        *value = node->yCoord;
+        break;
+
     case EN_SOURCEQUAL:
     case EN_SOURCEPAT:
     case EN_SOURCETYPE:

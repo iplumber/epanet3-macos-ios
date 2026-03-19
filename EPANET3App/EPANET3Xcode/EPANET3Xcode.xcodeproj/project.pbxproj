@@ -18,6 +18,7 @@
 		4311E24F2F670CA1006E8238 /* EPANET3iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EPANET3iOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1B2C3D4E5F60002001 /* EPANET3MacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPANET3Mac/EPANET3MacApp.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60004001 /* EPANET3iOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPANET3iOS/EPANET3iOSApp.swift; sourceTree = "<group>"; };
+		4311E2502F670CA1006E8238 /* EPANET3App */ = {isa = PBXFileReference; lastKnownFileType = folder; name = EPANET3App; path = ".."; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -43,6 +44,7 @@
 		4311E24B2F670CA1006E8238 /* EPANET3Xcode */ = {
 			isa = PBXGroup;
 			children = (
+				4311E2502F670CA1006E8238 /* EPANET3App */,
 				4311E24C2F670CA1006E8238 /* Recovered References */,
 				4311E24E2F670CA1006E8238 /* Products */,
 			);

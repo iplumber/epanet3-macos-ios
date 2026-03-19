@@ -7,8 +7,54 @@ import Foundation
 import EPANET3Bridge
 
 let args = CommandLine.arguments
+
+if args.count >= 3 && args[1] == "--self-check-errors" {
+    let inpPath = args[2]
+    guard FileManager.default.fileExists(atPath: inpPath) else {
+        print("Error: Input file not found: \(inpPath)")
+        exit(1)
+    }
+    print("EPANET 3 Error Usability Self-Check")
+    print("Input: \(inpPath)")
+    do {
+        let project = EpanetProject()
+        try project.load(path: inpPath)
+
+        // 1) Duplicate node ID
+        do {
+            _ = try project.createNode(id: "11", type: .junction)
+            print("[FAIL] duplicate node ID was accepted unexpectedly")
+        } catch let e as EpanetError {
+            print("[OK] duplicate node ID -> \(e.localizedDescription)")
+        }
+
+        // 2) Invalid link parameter (negative length)
+        do {
+            try project.setLinkValue(linkIndex: 1, param: .length, value: -1)
+            print("[FAIL] negative link length was accepted unexpectedly")
+        } catch let e as EpanetError {
+            print("[OK] invalid link length -> \(e.localizedDescription)")
+        }
+
+        // 3) Delete connected node
+        do {
+            try project.deleteNode(id: "11")
+            print("[FAIL] connected node deletion was accepted unexpectedly")
+        } catch let e as EpanetError {
+            print("[OK] delete connected node -> \(e.localizedDescription)")
+        }
+
+        print("Self-check completed.")
+        exit(0)
+    } catch {
+        print("Self-check setup failed: \(error)")
+        exit(1)
+    }
+}
+
 guard args.count >= 2 else {
     print("Usage: EPANET3CLI <inp_path> [rpt_path] [out_path]")
+    print("   or: EPANET3CLI --self-check-errors <inp_path>")
     exit(1)
 }
 
@@ -72,7 +118,22 @@ do {
 
     print("\nProject API test completed successfully.")
 } catch EpanetError.apiError(let code) {
-    print("EPANET API error: \(code)")
+    let detail = EpanetProject.describeError(code: code)
+    print("EPANET API error: [\(code)] \(detail)")
+    exit(Int32(truncatingIfNeeded: code))
+} catch EpanetError.apiContext(let code, let context) {
+    let detail = EpanetProject.describeError(code: code)
+    let object = context.objectType ?? "未指定对象"
+    let objectRef: String
+    if let id = context.objectID {
+        objectRef = "\(object)(ID=\(id))"
+    } else if let index = context.objectIndex {
+        objectRef = "\(object)(索引=\(index))"
+    } else {
+        objectRef = object
+    }
+    let param = context.parameter ?? "-"
+    print("EPANET API error: [\(code)] \(detail) | 接口=\(context.api) | 对象=\(objectRef) | 参数=\(param)")
     exit(Int32(truncatingIfNeeded: code))
 } catch {
     print("Error: \(error)")
