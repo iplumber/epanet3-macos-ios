@@ -20,7 +20,7 @@ struct EPANET3App: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("文件") {
-                Button("打开 .inp 文件...") {
+                Button("打开") {
                     appState.openFile()
                 }
                 .keyboardShortcut("o", modifiers: .command)

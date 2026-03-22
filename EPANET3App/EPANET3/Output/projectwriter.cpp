@@ -9,6 +9,7 @@
 #include "Core/network.h"
 #include "Core/constants.h"
 #include "Core/error.h"
+#include "Elements/node.h"
 #include "Elements/junction.h"
 #include "Elements/reservoir.h"
 #include "Elements/tank.h"
@@ -601,6 +602,22 @@ void ProjectWriter::writeTags()
 
 void ProjectWriter::writeCoords()
 {
+    bool wroteHeader = false;
+    for (Node* node : network->nodes)
+    {
+        if ( node->xCoord > -1e19 && node->yCoord > -1e19 )
+        {
+            if ( !wroteHeader )
+            {
+                fout << "\n[COORDINATES]\n";
+                wroteHeader = true;
+            }
+            fout << left << setw(16) << node->name << " ";
+            fout << fixed << setprecision(6);
+            fout << setw(18) << node->xCoord;
+            fout << setw(18) << node->yCoord << "\n";
+        }
+    }
 }
 
 void ProjectWriter::writeAuxData()

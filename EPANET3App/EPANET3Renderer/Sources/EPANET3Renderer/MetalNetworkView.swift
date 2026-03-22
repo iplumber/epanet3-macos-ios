@@ -529,13 +529,14 @@ public struct MetalNetworkView: NSViewRepresentable {
     let linkScalars: [Float]?
     let nodeScalarRange: (Float, Float)?
     let linkScalarRange: (Float, Float)?
+    let clearColor: MTLClearColor?
     let onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)?
     let onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)?
     let onPressEscape: (() -> Void)?
     let onMouseMove: (((Float, Float)?) -> Void)?
     let onSelect: ((Int?, Int?) -> Void)?
 
-    public init(scene: NetworkScene?, scale: CGFloat = 1, panX: CGFloat = 0, panY: CGFloat = 0, selectedNodeIndex: Int? = nil, selectedLinkIndex: Int? = nil, nodeScalars: [Float]? = nil, linkScalars: [Float]? = nil, nodeScalarRange: (Float, Float)? = nil, linkScalarRange: (Float, Float)? = nil, onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)? = nil, onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)? = nil, onPressEscape: (() -> Void)? = nil, onMouseMove: (((Float, Float)?) -> Void)? = nil, onSelect: ((Int?, Int?) -> Void)? = nil) {
+    public init(scene: NetworkScene?, scale: CGFloat = 1, panX: CGFloat = 0, panY: CGFloat = 0, selectedNodeIndex: Int? = nil, selectedLinkIndex: Int? = nil, nodeScalars: [Float]? = nil, linkScalars: [Float]? = nil, nodeScalarRange: (Float, Float)? = nil, linkScalarRange: (Float, Float)? = nil, clearColor: MTLClearColor? = nil, onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)? = nil, onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)? = nil, onPressEscape: (() -> Void)? = nil, onMouseMove: (((Float, Float)?) -> Void)? = nil, onSelect: ((Int?, Int?) -> Void)? = nil) {
         self.scene = scene
         self.scale = scale
         self.panX = panX
@@ -546,6 +547,7 @@ public struct MetalNetworkView: NSViewRepresentable {
         self.linkScalars = linkScalars
         self.nodeScalarRange = nodeScalarRange
         self.linkScalarRange = linkScalarRange
+        self.clearColor = clearColor
         self.onScrollWheel = onScrollWheel
         self.onPanDelta = onPanDelta
         self.onPressEscape = onPressEscape
@@ -563,9 +565,16 @@ public struct MetalNetworkView: NSViewRepresentable {
         let mtkView = MapMTKView()
         mtkView.device = MTLCreateSystemDefaultDevice()
         mtkView.delegate = context.coordinator
-        mtkView.clearColor = MTLClearColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1)
+        mtkView.clearColor = clearColor ?? MTLClearColor(red: 248/255.0, green: 247/255.0, blue: 242/255.0, alpha: 1)
         mtkView.colorPixelFormat = .bgra8Unorm
         mtkView.framebufferOnly = true
+        if let cc = clearColor, cc.alpha == 0 {
+            mtkView.layer?.isOpaque = false
+            #if os(macOS)
+            mtkView.wantsLayer = true
+            mtkView.layer?.backgroundColor = NSColor.clear.cgColor
+            #endif
+        }
         mtkView.enableSetNeedsDisplay = true
         mtkView.eventHandler = container
         context.coordinator.view = mtkView
@@ -622,13 +631,14 @@ public struct MetalNetworkView: UIViewRepresentable {
     let linkScalars: [Float]?
     let nodeScalarRange: (Float, Float)?
     let linkScalarRange: (Float, Float)?
+    let clearColor: MTLClearColor?
     let onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)?
     let onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)?
     let onPressEscape: (() -> Void)?
     let onMouseMove: (((Float, Float)?) -> Void)?
     let onSelect: ((Int?, Int?) -> Void)?
 
-    public init(scene: NetworkScene?, scale: CGFloat = 1, panX: CGFloat = 0, panY: CGFloat = 0, selectedNodeIndex: Int? = nil, selectedLinkIndex: Int? = nil, nodeScalars: [Float]? = nil, linkScalars: [Float]? = nil, nodeScalarRange: (Float, Float)? = nil, linkScalarRange: (Float, Float)? = nil, onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)? = nil, onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)? = nil, onPressEscape: (() -> Void)? = nil, onMouseMove: (((Float, Float)?) -> Void)? = nil, onSelect: ((Int?, Int?) -> Void)? = nil) {
+    public init(scene: NetworkScene?, scale: CGFloat = 1, panX: CGFloat = 0, panY: CGFloat = 0, selectedNodeIndex: Int? = nil, selectedLinkIndex: Int? = nil, nodeScalars: [Float]? = nil, linkScalars: [Float]? = nil, nodeScalarRange: (Float, Float)? = nil, linkScalarRange: (Float, Float)? = nil, clearColor: MTLClearColor? = nil, onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)? = nil, onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)? = nil, onPressEscape: (() -> Void)? = nil, onMouseMove: (((Float, Float)?) -> Void)? = nil, onSelect: ((Int?, Int?) -> Void)? = nil) {
         self.scene = scene
         self.scale = scale
         self.panX = panX
@@ -639,6 +649,7 @@ public struct MetalNetworkView: UIViewRepresentable {
         self.linkScalars = linkScalars
         self.nodeScalarRange = nodeScalarRange
         self.linkScalarRange = linkScalarRange
+        self.clearColor = clearColor
         self.onScrollWheel = onScrollWheel
         self.onPanDelta = onPanDelta
         self.onPressEscape = onPressEscape
@@ -650,9 +661,13 @@ public struct MetalNetworkView: UIViewRepresentable {
         let mtkView = MTKView()
         mtkView.device = MTLCreateSystemDefaultDevice()
         mtkView.delegate = context.coordinator
-        mtkView.clearColor = MTLClearColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1)
+        mtkView.clearColor = clearColor ?? MTLClearColor(red: 248/255.0, green: 247/255.0, blue: 242/255.0, alpha: 1)
         mtkView.colorPixelFormat = .bgra8Unorm
         mtkView.isUserInteractionEnabled = true
+        if let cc = clearColor, cc.alpha == 0 {
+            mtkView.layer.isOpaque = false
+            mtkView.backgroundColor = .clear
+        }
         context.coordinator.view = mtkView
         context.coordinator.scene = scene
         context.coordinator.scale = scale

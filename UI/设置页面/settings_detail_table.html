@@ -1,0 +1,344 @@
+
+<style>
+.t{width:100%;border-collapse:collapse;font-size:12.5px}
+.t th{text-align:left;padding:7px 10px;font-weight:500;font-size:11px;color:var(--color-text-secondary);border-bottom:1px solid var(--color-border-tertiary);white-space:nowrap}
+.t td{padding:6px 10px;vertical-align:top;border-bottom:0.5px solid var(--color-border-tertiary);color:var(--color-text-primary);line-height:1.5}
+.t tr:last-child td{border-bottom:none}
+.grp td{font-weight:500;font-size:11px;color:var(--color-text-secondary);padding:10px 10px 3px;letter-spacing:.05em;text-transform:uppercase}
+.tag{display:inline-block;font-size:10px;padding:1px 6px;border-radius:8px;margin-right:3px;white-space:nowrap}
+.tu{background:#E6F1FB;color:#0C447C}.th2{background:#E1F5EE;color:#085041}
+.ta{background:#FAEEDA;color:#633806}.tp{background:#EEEDFE;color:#3C3489}
+.tc{background:#FAECE7;color:#712B13}.ctrl{font-family:var(--color-text-secondary);font-size:11px;color:var(--color-text-secondary)}
+.def{font-family:monospace;font-size:11px;color:var(--color-text-secondary)}
+</style>
+<table class="t">
+<thead><tr>
+  <th style="width:16%">参数项</th>
+  <th style="width:10%">分类</th>
+  <th style="width:22%">说明 / 选项</th>
+  <th style="width:14%">默认值</th>
+  <th style="width:19%">控件类型</th>
+  <th style="width:19%">备注</th>
+</tr></thead>
+<tbody>
+
+<tr class="grp"><td colspan="6">单位 Units</td></tr>
+<tr>
+  <td>流量单位</td><td><span class="tag tu">单位</span></td>
+  <td>L/s · m³/h · GPM · MGD · CFS</td>
+  <td class="def">L/s</td>
+  <td class="ctrl">Picker / Segmented</td>
+  <td>切换时全局换算，保留精度</td>
+</tr>
+<tr>
+  <td>压力单位</td><td><span class="tag tu">单位</span></td>
+  <td>m（水头）· kPa · psi · bar</td>
+  <td class="def">m</td>
+  <td class="ctrl">Picker</td>
+  <td>影响节点压力显示与阈值判断</td>
+</tr>
+<tr>
+  <td>长度 / 管径单位</td><td><span class="tag tu">单位</span></td>
+  <td>m / mm（SI）· ft / in（US）</td>
+  <td class="def">m / mm</td>
+  <td class="ctrl">Segmented SI | US</td>
+  <td>SI/US 联动切换，也可单独设</td>
+</tr>
+<tr>
+  <td>流速单位</td><td><span class="tag tu">单位</span></td>
+  <td>m/s · ft/s</td>
+  <td class="def">m/s</td>
+  <td class="ctrl">Picker</td>
+  <td>跟随 SI/US 主开关</td>
+</tr>
+<tr>
+  <td>水头 / 高程单位</td><td><span class="tag tu">单位</span></td>
+  <td>m · ft</td>
+  <td class="def">m</td>
+  <td class="ctrl">Picker</td>
+  <td>节点高程、水头损失显示</td>
+</tr>
+<tr>
+  <td>粗糙度单位</td><td><span class="tag tu">单位</span></td>
+  <td>mm（H-W 为无量纲）· ft · 无量纲</td>
+  <td class="def">mm</td>
+  <td class="ctrl">只读（随摩阻公式）</td>
+  <td>H-W：C 系数；D-W：mm；C-M：无量纲</td>
+</tr>
+
+<tr class="grp"><td colspan="6">水力 Hydraulics</td></tr>
+<tr>
+  <td>摩阻公式</td><td><span class="tag th2">水力</span></td>
+  <td>Hazen-Williams · Darcy-Weisbach · Chezy-Manning</td>
+  <td class="def">H-W</td>
+  <td class="ctrl">Segmented 3选1</td>
+  <td>影响粗糙度单位；切换时提示重新检查管道属性</td>
+</tr>
+<tr>
+  <td>流量收敛精度</td><td><span class="tag th2">水力</span></td>
+  <td>0.0001 – 0.1 (L/s 或选定单位)</td>
+  <td class="def">0.001</td>
+  <td class="ctrl">数值输入框</td>
+  <td>对应 EPANET ACCURACY 参数</td>
+</tr>
+<tr>
+  <td>水头收敛精度</td><td><span class="tag th2">水力</span></td>
+  <td>0.0001 – 0.1 m</td>
+  <td class="def">0.001</td>
+  <td class="ctrl">数值输入框</td>
+  <td>HEADLOSS 容差</td>
+</tr>
+<tr>
+  <td>最大迭代次数</td><td><span class="tag th2">水力</span></td>
+  <td>10 – 200</td>
+  <td class="def">40</td>
+  <td class="ctrl">步进器 Stepper</td>
+  <td>超限视为不收敛，报警告</td>
+</tr>
+<tr>
+  <td>相对收敛判据</td><td><span class="tag th2">水力</span></td>
+  <td>开 / 关（启用相对误差代替绝对误差）</td>
+  <td class="def">关</td>
+  <td class="ctrl">Toggle</td>
+  <td>EPANET 3.0 新增</td>
+</tr>
+<tr>
+  <td>动力粘度修正</td><td><span class="tag th2">水力</span></td>
+  <td>相对粘度系数，默认 1.0（20°C 水）</td>
+  <td class="def">1.0</td>
+  <td class="ctrl">数值输入框</td>
+  <td>VISCOSITY 参数</td>
+</tr>
+<tr>
+  <td>需水量模型</td><td><span class="tag th2">水力</span></td>
+  <td>DDA（需水量驱动）· PDA（压力驱动）</td>
+  <td class="def">DDA</td>
+  <td class="ctrl">Segmented</td>
+  <td>PDA 时启用最小/设计压力设置</td>
+</tr>
+<tr>
+  <td>最小服务压力（PDA）</td><td><span class="tag th2">水力</span></td>
+  <td>0 – 设计压力（m/psi）</td>
+  <td class="def">0 m</td>
+  <td class="ctrl">数值输入框（PDA 才启用）</td>
+  <td>低于此值需水量为 0</td>
+</tr>
+<tr>
+  <td>设计服务压力（PDA）</td><td><span class="tag th2">水力</span></td>
+  <td>高于最小服务压力</td>
+  <td class="def">20 m</td>
+  <td class="ctrl">数值输入框（PDA 才启用）</td>
+  <td>高于此值需水量满足</td>
+</tr>
+<tr>
+  <td>不平衡处理策略</td><td><span class="tag th2">水力</span></td>
+  <td>继续迭代 / 停止报错 / 警告后继续</td>
+  <td class="def">警告后继续</td>
+  <td class="ctrl">Picker</td>
+  <td>不收敛时的行为策略</td>
+</tr>
+<tr>
+  <td>检查截止流速</td><td><span class="tag th2">水力</span></td>
+  <td>0.001 – 0.1 m/s（止回阀判断阈值）</td>
+  <td class="def">0.01</td>
+  <td class="ctrl">数值输入框</td>
+  <td>CHECKFREQ / DAMPLIMIT 相关</td>
+</tr>
+
+<tr class="grp"><td colspan="6">计算 Simulation</td></tr>
+<tr>
+  <td>模拟类型</td><td><span class="tag ta">计算</span></td>
+  <td>稳态（Steady State）· 时变扩展周期（EPS）</td>
+  <td class="def">稳态</td>
+  <td class="ctrl">Segmented</td>
+  <td>稳态时隐藏时间相关参数</td>
+</tr>
+<tr>
+  <td>模拟总时长</td><td><span class="tag ta">计算</span></td>
+  <td>1 h – 30 d（自由输入 + 单位选择）</td>
+  <td class="def">24 h</td>
+  <td class="ctrl">数值 + 单位 Picker</td>
+  <td>EPS 专用；h / d 单位可选</td>
+</tr>
+<tr>
+  <td>水力时间步长</td><td><span class="tag ta">计算</span></td>
+  <td>1 min – 4 h</td>
+  <td class="def">1 h</td>
+  <td class="ctrl">数值 + 单位 Picker</td>
+  <td>不得超过模拟总时长</td>
+</tr>
+<tr>
+  <td>质量时间步长</td><td><span class="tag ta">计算</span></td>
+  <td>1 s – 水力步长</td>
+  <td class="def">5 min</td>
+  <td class="ctrl">数值 + 单位 Picker</td>
+  <td>水质模拟用，不超过水力步长</td>
+</tr>
+<tr>
+  <td>报告输出步长</td><td><span class="tag ta">计算</span></td>
+  <td>≥ 水力步长</td>
+  <td class="def">1 h</td>
+  <td class="ctrl">数值 + 单位 Picker</td>
+  <td>减小步长增大结果文件</td>
+</tr>
+<tr>
+  <td>报告开始时间</td><td><span class="tag ta">计算</span></td>
+  <td>0 – 模拟总时长（预热期后开始报告）</td>
+  <td class="def">0 h</td>
+  <td class="ctrl">数值输入框</td>
+  <td>跳过启动预热期数据</td>
+</tr>
+<tr>
+  <td>水质模拟</td><td><span class="tag ta">计算</span></td>
+  <td>无 · 氯消毒 · 水龄 · 示踪剂 · 自定义</td>
+  <td class="def">无</td>
+  <td class="ctrl">Picker</td>
+  <td>选氯/示踪时出现扩散系数等子项</td>
+</tr>
+<tr>
+  <td>总体扩散系数</td><td><span class="tag ta">计算</span></td>
+  <td>0 – 10（相对值，1.0 = 标准扩散）</td>
+  <td class="def">1.0</td>
+  <td class="ctrl">数值输入框（水质非空时启用）</td>
+  <td>DIFFUSIVITY 参数</td>
+</tr>
+<tr>
+  <td>总体衰减系数</td><td><span class="tag ta">计算</span></td>
+  <td>≤ 0（负值，管道内整体反应速率）</td>
+  <td class="def">0.0</td>
+  <td class="ctrl">数值输入框（氯模拟时启用）</td>
+  <td>BULK_COEFF 全局值</td>
+</tr>
+<tr>
+  <td>报告输出项</td><td><span class="tag ta">计算</span></td>
+  <td>节点（压力·水头·需水量·水质） + 管段（流量·流速·水头损失·摩擦坡降）</td>
+  <td class="def">全选</td>
+  <td class="ctrl">多选 Checkboxes</td>
+  <td>减少不需要的项可加快结果写入</td>
+</tr>
+
+<tr class="grp"><td colspan="6">显示 Display</td></tr>
+<tr>
+  <td>节点默认颜色</td><td><span class="tag tp">显示</span></td>
+  <td>按类型分别设：Junction · Tank · Reservoir</td>
+  <td class="def">蓝/绿/紫</td>
+  <td class="ctrl">Color Picker × 3</td>
+  <td>不影响结果热力图叠加</td>
+</tr>
+<tr>
+  <td>管段默认颜色</td><td><span class="tag tp">显示</span></td>
+  <td>Pipe · Valve · Pump 各一色</td>
+  <td class="def">灰/橙/橙红</td>
+  <td class="ctrl">Color Picker × 3</td>
+  <td>-</td>
+</tr>
+<tr>
+  <td>节点显示尺寸</td><td><span class="tag tp">显示</span></td>
+  <td>1 – 20 px（画布像素，随缩放比例调整）</td>
+  <td class="def">6 px</td>
+  <td class="ctrl">Slider + 预览</td>
+  <td>缩放级别 < 20% 时自动缩小</td>
+</tr>
+<tr>
+  <td>管段线宽</td><td><span class="tag tp">显示</span></td>
+  <td>1 – 8 px</td>
+  <td class="def">2 px</td>
+  <td class="ctrl">Slider + 预览</td>
+  <td>可按直径比例显示（可选）</td>
+</tr>
+<tr>
+  <td>按管径比例显示</td><td><span class="tag tp">显示</span></td>
+  <td>开 / 关；开时管径越大线越粗</td>
+  <td class="def">关</td>
+  <td class="ctrl">Toggle</td>
+  <td>对大型管网影响感知明显</td>
+</tr>
+<tr>
+  <td>标注内容</td><td><span class="tag tp">显示</span></td>
+  <td>ID · 名称 · 高程 · 需水量 · 压力 · 水头（多选）</td>
+  <td class="def">ID</td>
+  <td class="ctrl">多选 Checkboxes</td>
+  <td>缩放 > 50% 才显示</td>
+</tr>
+<tr>
+  <td>标注字号</td><td><span class="tag tp">显示</span></td>
+  <td>8 – 18 pt</td>
+  <td class="def">10 pt</td>
+  <td class="ctrl">Stepper</td>
+  <td>-</td>
+</tr>
+<tr>
+  <td>结果图例色带</td><td><span class="tag tp">显示</span></td>
+  <td>预设方案：蓝→绿→黄→红 / 灰度 / 自定义</td>
+  <td class="def">蓝→红</td>
+  <td class="ctrl">Picker + 自定义入口</td>
+  <td>自定义支持添加色标节点</td>
+</tr>
+<tr>
+  <td>图例分段数</td><td><span class="tag tp">显示</span></td>
+  <td>3 – 10</td>
+  <td class="def">5</td>
+  <td class="ctrl">Stepper</td>
+  <td>-</td>
+</tr>
+<tr>
+  <td>图例值范围</td><td><span class="tag tp">显示</span></td>
+  <td>自动（取结果最小/最大值）· 手动输入</td>
+  <td class="def">自动</td>
+  <td class="ctrl">Toggle + 两个数值框</td>
+  <td>-</td>
+</tr>
+<tr>
+  <td>背景地图</td><td><span class="tag tp">显示</span></td>
+  <td>无 · 本地图片 · OSM 在线底图</td>
+  <td class="def">无</td>
+  <td class="ctrl">Picker + 文件选择</td>
+  <td>在线底图需网络；透明度可调</td>
+</tr>
+
+<tr class="grp"><td colspan="6">通用 General</td></tr>
+<tr>
+  <td>外观主题</td><td><span class="tag tc">通用</span></td>
+  <td>跟随系统 · 浅色 · 深色</td>
+  <td class="def">跟随系统</td>
+  <td class="ctrl">Segmented 3选1</td>
+  <td>-</td>
+</tr>
+<tr>
+  <td>自动保存</td><td><span class="tag tc">通用</span></td>
+  <td>开 / 关；间隔：1 / 5 / 10 min</td>
+  <td class="def">开 · 5 min</td>
+  <td class="ctrl">Toggle + Picker</td>
+  <td>macOS 利用 NSDocument 自动保存</td>
+</tr>
+<tr>
+  <td>新建项目默认模板</td><td><span class="tag tc">通用</span></td>
+  <td>空白 · SI 标准 · US 标准 · 自定义模板</td>
+  <td class="def">空白</td>
+  <td class="ctrl">Picker</td>
+  <td>自定义模板从当前项目保存</td>
+</tr>
+<tr>
+  <td>语言</td><td><span class="tag tc">通用</span></td>
+  <td>跟随系统 · 中文 · English</td>
+  <td class="def">跟随系统</td>
+  <td class="ctrl">Picker</td>
+  <td>重启后生效</td>
+</tr>
+<tr>
+  <td>最近文件数量</td><td><span class="tag tc">通用</span></td>
+  <td>5 / 10 / 20</td>
+  <td class="def">10</td>
+  <td class="ctrl">Stepper</td>
+  <td>-</td>
+</tr>
+<tr>
+  <td>恢复出厂默认</td><td><span class="tag tc">通用</span></td>
+  <td>重置全部设置为默认值</td>
+  <td class="def">—</td>
+  <td class="ctrl">危险按钮（红色确认）</td>
+  <td>不影响已保存的 .inp 文件</td>
+</tr>
+
+</tbody>
+</table>

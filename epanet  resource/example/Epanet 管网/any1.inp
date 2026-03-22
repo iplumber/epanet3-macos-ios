@@ -1,7 +1,7 @@
 [TITLE]
 PROJECT NAME: ANYTOWN
 PROJECT DESCRIPTION: Anytown Network, USA (Walski et al., 1987)
-PROJECT CREATOR: Hugo J. Bartolín
+PROJECT CREATOR: Hugo J. BartolÃ­n
 CREATION DATE: 24-08-2002 22:33:03
 NAME OF SCENARIO: Anytown
 SCENARIO DESCRIPTION: Anytown Network, USA (Walski et al., 1987)
@@ -71,8 +71,8 @@ SCENARIO DESCRIPTION: Anytown Network, USA (Walski et al., 1987)
  1056            	120             	130             	1830        	203         	130         	0           	Open  	;
  1058            	130             	160             	1830        	254         	130         	0           	Open  	;
  1060            	130             	170             	1830        	203         	130         	0           	Open  	;
- 1062            	140             	160             	1830        	203         	130         	0           	Open  	;
- 1064            	140             	170             	3656        	203         	130         	0           	Open  	;
+ 1062 140 160 1830 199 130 0 Open;
+ 1064 140 170 3656 200 130 0 Open;
  1066            	50              	140             	3656        	203         	130         	0           	Open  	;
  1078            	60              	TANKA           	30.5        	305         	110         	0           	OPEN  	;
  1080            	160             	TANKB           	30.5        	305         	110         	0           	OPEN  	;

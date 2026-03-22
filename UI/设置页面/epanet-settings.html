@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EPANET 3 — Settings</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --font:'DM Sans',system-ui,sans-serif;
+  --mono:'DM Mono',monospace;
+}
+
+html,body{
+  width:100%;min-height:100vh;
+  background:#1a1a1a;
+  font-family:var(--font);
+  display:flex;flex-direction:column;
+  align-items:center;
+  padding:32px 24px 64px;
+  gap:56px;
+}
+
+/* ── section label ── */
+.section-label{
+  font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:#666;font-family:var(--mono);
+  align-self:flex-start;margin-bottom:-40px;
+}
+
+/* ═══════════════════════════════════════
+   macOS PREFERENCES WINDOW
+═══════════════════════════════════════ */
+.mac-window{
+  width:860px;
+  background:#1e1e1e;
+  border-radius:12px;
+  border:1px solid #3a3a3a;
+  box-shadow:0 24px 80px rgba(0,0,0,.7);
+  overflow:hidden;
+  display:flex;flex-direction:column;
+}
+/* titlebar */
+.mac-titlebar{
+  height:40px;background:linear-gradient(180deg,#2a2a2a,#242424);
+  border-bottom:1px solid #3a3a3a;
+  display:flex;align-items:center;padding:0 16px;position:relative;
+}
+.traffic{display:flex;gap:8px}
+.d{width:12px;height:12px;border-radius:50%;border:0.5px solid rgba(0,0,0,.2)}
+.dr{background:#ff5f57}.dy{background:#febc2e}.dg{background:#28c840}
+.mac-titlebar-title{
+  position:absolute;left:50%;transform:translateX(-50%);
+  font-size:13px;color:#a0a09e;font-weight:500;
+}
+/* toolbar (category icons) */
+.mac-toolbar{
+  background:linear-gradient(180deg,#2c2c2c,#262626);
+  border-bottom:1px solid #3a3a3a;
+  display:flex;align-items:center;justify-content:center;
+  gap:0;padding:6px 16px;
+}
+.mac-tb-item{
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  padding:6px 18px;border-radius:8px;cursor:pointer;
+  transition:background .12s;min-width:72px;
+}
+.mac-tb-item:hover{background:rgba(255,255,255,.07)}
+.mac-tb-item.active{background:rgba(74,158,255,.15)}
+.mac-tb-icon{
+  width:28px;height:28px;border-radius:7px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;
+}
+.mac-tb-label{font-size:11px;color:#a0a09e}
+.mac-tb-item.active .mac-tb-label{color:#4a9eff}
+
+/* body: sidebar + content */
+.mac-body{display:flex;flex:1;overflow:hidden}
+.mac-sidebar{
+  width:180px;flex-shrink:0;
+  background:#1a1a1a;
+  border-right:1px solid #333;
+  padding:12px 0;
+}
+.mac-nav-item{
+  display:flex;align-items:center;gap:9px;
+  padding:6px 16px;font-size:13px;color:#a0a09e;
+  cursor:pointer;position:relative;transition:background .1s;
+  border-radius:0;
+}
+.mac-nav-item:hover{background:rgba(255,255,255,.05)}
+.mac-nav-item.active{color:#e8e8e6;background:rgba(74,158,255,.12)}
+.mac-nav-item.active::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;
+  width:2.5px;background:#4a9eff;border-radius:0 1.5px 1.5px 0;
+}
+.mac-nav-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.mac-nav-section{
+  font-size:10px;color:#555;font-weight:500;letter-spacing:.06em;
+  text-transform:uppercase;padding:12px 16px 4px;
+}
+
+/* Content pane */
+.mac-content{
+  flex:1;padding:24px 28px;overflow-y:auto;
+  background:#1e1e1e;
+}
+.mac-content::-webkit-scrollbar{width:5px}
+.mac-content::-webkit-scrollbar-thumb{background:#3a3a3a;border-radius:3px}
+
+.pane-title{font-size:18px;font-weight:500;color:#e8e8e6;margin-bottom:20px}
+.pane-section{margin-bottom:24px}
+.pane-section-label{
+  font-size:11px;color:#686866;font-weight:500;
+  letter-spacing:.05em;text-transform:uppercase;
+  margin-bottom:10px;padding-bottom:6px;
+  border-bottom:1px solid #2e2e2e;
+}
+
+/* Form rows */
+.form-row{
+  display:flex;align-items:center;
+  min-height:36px;padding:4px 0;
+  border-bottom:0.5px solid #2a2a2a;
+}
+.form-row:last-child{border-bottom:none}
+.form-label{
+  font-size:13px;color:#c0c0be;flex:1;
+  padding-right:16px;line-height:1.4;
+}
+.form-label small{display:block;font-size:11px;color:#686866;margin-top:1px}
+.form-ctrl{display:flex;align-items:center;gap:8px;flex-shrink:0}
+
+/* Controls */
+.seg{
+  display:flex;background:#2a2a2a;border-radius:7px;
+  border:1px solid #3a3a3a;padding:2px;gap:1px;
+}
+.seg-opt{
+  padding:3px 12px;border-radius:5px;font-size:12px;color:#888;
+  cursor:pointer;transition:all .12s;white-space:nowrap;
+}
+.seg-opt.on{background:#3a3a3a;color:#e8e8e6;font-weight:500}
+
+.field{
+  background:#252525;border:1px solid #3a3a3a;
+  border-radius:6px;padding:4px 10px;
+  font-size:13px;color:#e8e8e6;font-family:var(--mono);
+  min-width:88px;text-align:right;
+}
+.field.active{border-color:#4a9eff;color:#7ab8ff;background:rgba(74,158,255,.08)}
+
+.unit-tag{
+  font-size:11px;color:#686866;font-family:var(--mono);
+  background:#252525;border:1px solid #333;
+  border-radius:4px;padding:2px 6px;white-space:nowrap;
+}
+
+.toggle{
+  width:36px;height:20px;border-radius:10px;
+  background:#3a3a3a;position:relative;cursor:pointer;
+  flex-shrink:0;transition:background .2s;
+}
+.toggle.on{background:#4a9eff}
+.toggle::after{
+  content:'';position:absolute;
+  top:2px;left:2px;width:16px;height:16px;
+  background:#fff;border-radius:50%;
+  transition:transform .2s;
+}
+.toggle.on::after{transform:translateX(16px)}
+
+.picker{
+  background:#252525;border:1px solid #3a3a3a;
+  border-radius:6px;padding:4px 24px 4px 10px;
+  font-size:12px;color:#c0c0be;
+  position:relative;cursor:pointer;white-space:nowrap;
+  min-width:120px;display:flex;align-items:center;justify-content:space-between;
+}
+.picker::after{content:'⌄';color:#686866;font-size:10px}
+
+.stepper{
+  display:flex;align-items:center;gap:0;
+  border:1px solid #3a3a3a;border-radius:6px;overflow:hidden;
+}
+.stepper-btn{
+  width:26px;height:26px;background:#2a2a2a;
+  display:flex;align-items:center;justify-content:center;
+  color:#888;cursor:pointer;font-size:14px;
+  transition:background .1s;
+}
+.stepper-btn:hover{background:#333}
+.stepper-val{
+  padding:0 10px;font-size:12px;color:#e8e8e6;
+  font-family:var(--mono);background:#252525;
+  border-left:1px solid #3a3a3a;border-right:1px solid #3a3a3a;
+  height:26px;display:flex;align-items:center;
+  min-width:44px;justify-content:center;
+}
+
+.color-swatch{
+  width:22px;height:22px;border-radius:5px;
+  border:1px solid rgba(255,255,255,.15);cursor:pointer;
+  flex-shrink:0;
+}
+.swatch-row{display:flex;gap:6px;align-items:center}
+.swatch-label{font-size:11px;color:#686866;min-width:56px}
+
+.danger-btn{
+  padding:5px 14px;border-radius:6px;
+  background:rgba(255,69,58,.12);border:1px solid rgba(255,69,58,.3);
+  color:#ff6961;font-size:12px;cursor:pointer;
+  transition:background .12s;
+}
+.danger-btn:hover{background:rgba(255,69,58,.2)}
+
+/* sub-row (indented) */
+.form-row.sub{
+  padding-left:16px;
+  background:rgba(255,255,255,.015);
+}
+.form-row.sub .form-label{color:#a0a09e}
+
+/* disabled */
+.form-row.disabled .form-label{color:#555}
+.form-row.disabled .form-ctrl{opacity:.35;pointer-events:none}
+
+/* note */
+.pane-note{
+  font-size:11px;color:#555;
+  background:#1a1a1a;border:1px solid #2e2e2e;
+  border-radius:7px;padding:8px 12px;margin-top:10px;
+  line-height:1.6;
+}
+
+/* bottom bar */
+.mac-bottom{
+  height:44px;background:#1a1a1a;
+  border-top:1px solid #333;
+  display:flex;align-items:center;justify-content:flex-end;
+  padding:0 20px;gap:10px;
+}
+.mac-btn{
+  padding:5px 16px;border-radius:7px;font-size:13px;cursor:pointer;
+  font-family:var(--font);
+}
+.mac-btn-secondary{background:#2a2a2a;border:1px solid #3a3a3a;color:#c0c0be}
+.mac-btn-primary{background:#4a9eff;border:1px solid #3a7dd4;color:#fff;font-weight:500}
+.mac-btn-primary:hover{background:#3a8ef0}
+
+
+/* ═══════════════════════════════════════
+   iOS SETTINGS  (light)
+═══════════════════════════════════════ */
+.ios-wrap{
+  display:flex;gap:32px;align-items:flex-start;flex-wrap:wrap;
+}
+.ios-device{
+  width:390px;
+  background:#fff;border-radius:54px;overflow:hidden;
+  border:1px solid rgba(0,0,0,.12);
+  box-shadow:0 24px 72px rgba(0,0,0,.25),0 0 0 6px #d8d8dc,0 0 0 7px rgba(0,0,0,.1);
+}
+.ios-sb{
+  height:54px;padding:16px 28px 0;
+  display:flex;align-items:center;justify-content:space-between;
+  background:#fff;
+}
+.ios-time{font-size:17px;font-weight:600;color:#000}
+.ios-batt{display:flex;align-items:center;gap:5px}
+.ios-island{width:120px;height:34px;background:#000;border-radius:20px;margin:8px auto;display:block}
+.ios-nav{
+  height:52px;display:flex;align-items:center;
+  padding:0 20px;border-bottom:0.5px solid rgba(0,0,0,.1);
+  background:rgba(249,249,251,.92);backdrop-filter:blur(20px);
+  position:relative;
+}
+.ios-nav-back{color:#007aff;font-size:16px;font-weight:500}
+.ios-nav-title{
+  position:absolute;left:50%;transform:translateX(-50%);
+  font-size:17px;font-weight:600;color:#000;white-space:nowrap;
+}
+.ios-body{background:#f2f2f7;min-height:500px;overflow-y:auto}
+.ios-body::-webkit-scrollbar{display:none}
+
+/* iOS list sections */
+.ios-section{padding:18px 0 0}
+.ios-section-header{
+  font-size:13px;font-weight:400;color:rgba(0,0,0,.5);
+  padding:0 16px 6px;text-transform:uppercase;letter-spacing:.04em;font-size:12px;
+}
+.ios-group{
+  background:#fff;margin:0 16px;border-radius:10px;
+  overflow:hidden;
+  box-shadow:0 0.5px 0 rgba(0,0,0,.08);
+  margin-bottom:2px;
+}
+.ios-row{
+  display:flex;align-items:center;min-height:44px;
+  padding:0 16px;border-bottom:0.5px solid rgba(0,0,0,.1);
+  gap:12px;
+}
+.ios-row:last-child{border-bottom:none}
+.ios-row-icon{
+  width:28px;height:28px;border-radius:7px;
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;font-size:14px;
+}
+.ios-row-label{font-size:16px;color:#000;flex:1}
+.ios-row-label small{display:block;font-size:12px;color:rgba(0,0,0,.45);margin-top:1px}
+.ios-row-val{font-size:15px;color:rgba(0,0,0,.45)}
+.ios-chevron{color:rgba(0,0,0,.25);font-size:14px;margin-left:4px}
+.ios-toggle{
+  width:50px;height:30px;border-radius:15px;background:#e5e5ea;
+  position:relative;flex-shrink:0;cursor:pointer;transition:background .2s;
+}
+.ios-toggle.on{background:#34c759}
+.ios-toggle::after{
+  content:'';position:absolute;top:2px;left:2px;
+  width:26px;height:26px;border-radius:50%;background:#fff;
+  box-shadow:0 2px 6px rgba(0,0,0,.2);transition:transform .2s;
+}
+.ios-toggle.on::after{transform:translateX(20px)}
+
+.ios-seg{
+  display:flex;background:#e5e5ea;border-radius:8px;padding:2px;
+  margin:0 16px 14px;
+}
+.ios-seg-item{
+  flex:1;height:30px;display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:500;border-radius:6px;color:rgba(0,0,0,.5);cursor:pointer;
+}
+.ios-seg-item.on{background:#fff;color:#000;box-shadow:0 1px 4px rgba(0,0,0,.12)}
+
+/* bottom safe area */
+.ios-safe{height:32px;background:#f2f2f7}
+
+/* detail page */
+.ios-detail-row{
+  display:flex;align-items:center;min-height:44px;
+  padding:0 16px;border-bottom:0.5px solid rgba(0,0,0,.1);
+  background:#fff;
+}
+.ios-detail-row:last-child{border-bottom:none}
+.ios-detail-label{font-size:16px;color:#000;flex:1}
+.ios-detail-field{
+  font-size:15px;color:#007aff;font-family:var(--mono);
+  text-align:right;
+}
+.ios-detail-picker{
+  font-size:15px;color:rgba(0,0,0,.45);
+}
+</style>
+</head>
+<body>
+
+<!-- ══ macOS Preferences ══ -->
+<div class="section-label">macOS — 偏好设置 (⌘,)</div>
+<div class="mac-window">
+  <!-- Titlebar -->
+  <div class="mac-titlebar">
+    <div class="traffic"><div class="d dr"></div><div class="d dy"></div><div class="d dg"></div></div>
+    <div class="mac-titlebar-title">设置</div>
+  </div>
+
+  <!-- Icon toolbar (top-level tabs) -->
+  <div class="mac-toolbar">
+    <div class="mac-tb-item">
+      <div class="mac-tb-icon" style="background:rgba(74,158,255,.2)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="5" height="5" rx="1" fill="#4a9eff"/><rect x="9" y="2" width="5" height="5" rx="1" fill="#4a9eff" opacity=".5"/><rect x="2" y="9" width="5" height="5" rx="1" fill="#4a9eff" opacity=".5"/><rect x="9" y="9" width="5" height="5" rx="1" fill="#4a9eff" opacity=".3"/></svg>
+      </div>
+      <span class="mac-tb-label">单位</span>
+    </div>
+    <div class="mac-tb-item active">
+      <div class="mac-tb-icon" style="background:rgba(52,199,89,.2)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 13C3 8 13 8 13 3" stroke="#34c759" stroke-width="1.8" stroke-linecap="round"/><circle cx="13" cy="3" r="2" fill="#34c759"/><circle cx="3" cy="13" r="2" fill="#34c759"/></svg>
+      </div>
+      <span class="mac-tb-label">水力</span>
+    </div>
+    <div class="mac-tb-item">
+      <div class="mac-tb-icon" style="background:rgba(255,159,10,.2)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="#ff9f0a" stroke-width="1.5"/><path d="M8 5v3.5l2 2" stroke="#ff9f0a" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </div>
+      <span class="mac-tb-label">计算</span>
+    </div>
+    <div class="mac-tb-item">
+      <div class="mac-tb-icon" style="background:rgba(175,82,222,.2)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="9" rx="2" stroke="#af52de" stroke-width="1.5"/><path d="M5 14h6M8 11v3" stroke="#af52de" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </div>
+      <span class="mac-tb-label">显示</span>
+    </div>
+    <div class="mac-tb-item">
+      <div class="mac-tb-icon" style="background:rgba(255,100,80,.15)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="#ff6450" stroke-width="1.5"/><path d="M8 5v1.5M8 9.5V11M5 8h1.5M9.5 8H11" stroke="#ff6450" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </div>
+      <span class="mac-tb-label">通用</span>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="mac-body">
+    <!-- Sidebar -->
+    <div class="mac-sidebar">
+      <div class="mac-nav-section">水力参数</div>
+      <div class="mac-nav-item active">
+        <div class="mac-nav-dot" style="background:#34c759"></div>摩阻公式
+      </div>
+      <div class="mac-nav-item">
+        <div class="mac-nav-dot" style="background:#34c759"></div>收敛控制
+      </div>
+      <div class="mac-nav-item">
+        <div class="mac-nav-dot" style="background:#34c759"></div>需水量模型
+      </div>
+      <div class="mac-nav-item">
+        <div class="mac-nav-dot" style="background:#34c759"></div>流体属性
+      </div>
+      <div class="mac-nav-section" style="margin-top:4px">水质</div>
+      <div class="mac-nav-item">
+        <div class="mac-nav-dot" style="background:#5ac8fa"></div>水质模拟
+      </div>
+      <div class="mac-nav-item">
+        <div class="mac-nav-dot" style="background:#5ac8fa"></div>反应参数
+      </div>
+    </div>
+
+    <!-- Content: 水力 → 摩阻公式 + 收敛 -->
+    <div class="mac-content">
+      <div class="pane-title">水力参数</div>
+
+      <!-- 摩阻公式 -->
+      <div class="pane-section">
+        <div class="pane-section-label">摩阻公式</div>
+        <div class="form-row">
+          <div class="form-label">
+            水头损失计算公式
+            <small>影响管道粗糙度输入单位及含义</small>
+          </div>
+          <div class="form-ctrl">
+            <div class="seg">
+              <div class="seg-opt on">Hazen-Williams</div>
+              <div class="seg-opt">Darcy-Weisbach</div>
+              <div class="seg-opt">Chezy-Manning</div>
+            </div>
+          </div>
+        </div>
+        <div class="form-row sub">
+          <div class="form-label">粗糙度单位（当前公式）<small>H-W 使用 C 系数（无量纲）</small></div>
+          <div class="form-ctrl">
+            <span class="unit-tag">C 系数（无量纲）</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 收敛控制 -->
+      <div class="pane-section">
+        <div class="pane-section-label">收敛控制</div>
+        <div class="form-row">
+          <div class="form-label">流量收敛精度<small>各管段流量残差上限</small></div>
+          <div class="form-ctrl">
+            <div class="field active">0.001</div>
+            <span class="unit-tag">L/s</span>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-label">水头收敛精度<small>各节点水头残差上限</small></div>
+          <div class="form-ctrl">
+            <div class="field">0.001</div>
+            <span class="unit-tag">m</span>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-label">最大迭代次数</div>
+          <div class="form-ctrl">
+            <div class="stepper">
+              <div class="stepper-btn">−</div>
+              <div class="stepper-val">40</div>
+              <div class="stepper-btn">+</div>
+            </div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-label">使用相对收敛判据<small>以相对误差代替绝对误差（EPANET 3.0）</small></div>
+          <div class="form-ctrl">
+            <div class="toggle"></div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-label">不平衡处理策略<small>迭代不收敛时的行为</small></div>
+          <div class="form-ctrl">
+            <div class="picker">警告后继续</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 需水量模型 -->
+      <div class="pane-section">
+        <div class="pane-section-label">需水量模型</div>
+        <div class="form-row">
+          <div class="form-label">模拟模型<small>DDA: 需水量驱动；PDA: 压力驱动</small></div>
+          <div class="form-ctrl">
+            <div class="seg">
+              <div class="seg-opt on">DDA</div>
+              <div class="seg-opt">PDA</div>
+            </div>
+          </div>
+        </div>
+        <div class="form-row disabled">
+          <div class="form-label">最小服务压力（PDA）<small>低于此值需水量为 0</small></div>
+          <div class="form-ctrl">
+            <div class="field">0.0</div>
+            <span class="unit-tag">m</span>
+          </div>
+        </div>
+        <div class="form-row disabled">
+          <div class="form-label">设计服务压力（PDA）<small>高于此值需水量完全满足</small></div>
+          <div class="form-ctrl">
+            <div class="field">20.0</div>
+            <span class="unit-tag">m</span>
+          </div>
+        </div>
+        <div class="pane-note">PDA 模式下，启用压力驱动需水量分配。适用于供水不足分析场景。最小服务压力与设计服务压力参数在 PDA 模式下才生效。</div>
+      </div>
+
+      <!-- 流体属性 -->
+      <div class="pane-section">
+        <div class="pane-section-label">流体属性</div>
+        <div class="form-row">
+          <div class="form-label">动力粘度修正系数<small>相对值，1.0 = 20°C 清水</small></div>
+          <div class="form-ctrl">
+            <div class="field">1.0</div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-label">扩散系数<small>水质模拟中的扩散倍率</small></div>
+          <div class="form-ctrl">
+            <div class="field">1.0</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom bar -->
+  <div class="mac-bottom">
+    <button class="mac-btn mac-btn-secondary">恢复默认</button>
+    <button class="mac-btn mac-btn-secondary">取消</button>
+    <button class="mac-btn mac-btn-primary">好</button>
+  </div>
+</div>
+
+
+<!-- ══ macOS — 计算标签页 ══ -->
+<div class="section-label">macOS — 计算 / 单位 标签页（同窗口切换效果）</div>
+<div class="mac-window" style="height:auto">
+  <div class="mac-titlebar">
+    <div class="traffic"><div class="d dr"></div><div class="d dy"></div><div class="d dg"></div></div>
+    <div class="mac-titlebar-title">设置</div>
+  </div>
+  <div class="mac-toolbar">
+    <div class="mac-tb-item">
+      <div class="mac-tb-icon" style="background:rgba(74,158,255,.2)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="5" height="5" rx="1" fill="#4a9eff"/><rect x="9" y="2" width="5" height="5" rx="1" fill="#4a9eff" opacity=".5"/><rect x="2" y="9" width="5" height="5" rx="1" fill="#4a9eff" opacity=".5"/><rect x="9" y="9" width="5" height="5" rx="1" fill="#4a9eff" opacity=".3"/></svg>
+      </div>
+      <span class="mac-tb-label">单位</span>
+    </div>
+    <div class="mac-tb-item">
+      <div class="mac-tb-icon" style="background:rgba(52,199,89,.2)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 13C3 8 13 8 13 3" stroke="#34c759" stroke-width="1.8" stroke-linecap="round"/><circle cx="13" cy="3" r="2" fill="#34c759"/><circle cx="3" cy="13" r="2" fill="#34c759"/></svg>
+      </div>
+      <span class="mac-tb-label">水力</span>
+    </div>
+    <div class="mac-tb-item active">
+      <div class="mac-tb-icon" style="background:rgba(255,159,10,.2)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="#ff9f0a" stroke-width="1.5"/><path d="M8 5v3.5l2 2" stroke="#ff9f0a" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </div>
+      <span class="mac-tb-label">计算</span>
+    </div>
+    <div class="mac-tb-item">
+      <div class="mac-tb-icon" style="background:rgba(175,82,222,.2)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="9" rx="2" stroke="#af52de" stroke-width="1.5"/><path d="M5 14h6M8 11v3" stroke="#af52de" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </div>
+      <span class="mac-tb-label">显示</span>
+    </div>
+    <div class="mac-tb-item">
+      <div class="mac-tb-icon" style="background:rgba(255,100,80,.15)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="#ff6450" stroke-width="1.5"/><path d="M8 5v1.5M8 9.5V11M5 8h1.5M9.5 8H11" stroke="#ff6450" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </div>
+      <span class="mac-tb-label">通用</span>
+    </div>
+  </div>
+
+  <div class="mac-body" style="min-height:360px">
+    <div class="mac-sidebar">
+      <div class="mac-nav-section">模拟设置</div>
+      <div class="mac-nav-item active"><div class="mac-nav-dot" style="background:#ff9f0a"></div>模拟类型与时长</div>
+      <div class="mac-nav-item"><div class="mac-nav-dot" style="background:#ff9f0a"></div>时间步长</div>
+      <div class="mac-nav-section" style="margin-top:4px">水质</div>
+      <div class="mac-nav-item"><div class="mac-nav-dot" style="background:#5ac8fa"></div>水质模拟</div>
+      <div class="mac-nav-item"><div class="mac-nav-dot" style="background:#5ac8fa"></div>反应参数</div>
+      <div class="mac-nav-section" style="margin-top:4px">输出</div>
+      <div class="mac-nav-item"><div class="mac-nav-dot" style="background:#888"></div>报告输出项</div>
+    </div>
+    <div class="mac-content">
+      <div class="pane-title">计算参数</div>
+      <div class="pane-section">
+        <div class="pane-section-label">模拟类型</div>
+        <div class="form-row">
+          <div class="form-label">模拟模式<small>稳态：单次平衡；EPS：扩展周期时变模拟</small></div>
+          <div class="form-ctrl">
+            <div class="seg">
+              <div class="seg-opt on">稳态 Steady State</div>
+              <div class="seg-opt">时变 EPS</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pane-section">
+        <div class="pane-section-label">模拟时长（EPS）</div>
+        <div class="form-row disabled">
+          <div class="form-label">模拟总时长</div>
+          <div class="form-ctrl">
+            <div class="field">24</div>
+            <div class="picker" style="min-width:64px">h</div>
+          </div>
+        </div>
+        <div class="form-row disabled">
+          <div class="form-label">水力计算步长</div>
+          <div class="form-ctrl">
+            <div class="field">1</div>
+            <div class="picker" style="min-width:64px">h</div>
+          </div>
+        </div>
+        <div class="form-row disabled">
+          <div class="form-label">水质计算步长</div>
+          <div class="form-ctrl">
+            <div class="field">5</div>
+            <div class="picker" style="min-width:64px">min</div>
+          </div>
+        </div>
+        <div class="form-row disabled">
+          <div class="form-label">报告输出步长</div>
+          <div class="form-ctrl">
+            <div class="field">1</div>
+            <div class="picker" style="min-width:64px">h</div>
+          </div>
+        </div>
+        <div class="form-row disabled">
+          <div class="form-label">报告起始时间<small>跳过初始预热期</small></div>
+          <div class="form-ctrl">
+            <div class="field">0</div>
+            <div class="picker" style="min-width:64px">h</div>
+          </div>
+        </div>
+        <div class="pane-note">当前为稳态模式，以上时间参数不生效。切换至 EPS 后自动启用。</div>
+      </div>
+    </div>
+  </div>
+  <div class="mac-bottom">
+    <button class="mac-btn mac-btn-secondary">恢复默认</button>
+    <button class="mac-btn mac-btn-secondary">取消</button>
+    <button class="mac-btn mac-btn-primary">好</button>
+  </div>
+</div>
+
+
+<!-- ══ iOS Settings ══ -->
+<div class="section-label">iOS — 设置页面（浅色）</div>
+<div class="ios-wrap">
+
+  <!-- Device 1: Settings root list -->
+  <div>
+  <div class="ios-device">
+    <div class="ios-sb">
+      <div class="ios-time">9:41</div>
+      <div class="ios-island" style="display:block;width:120px;height:34px;background:#000;border-radius:20px;margin:0"></div>
+      <div class="ios-batt">
+        <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0" y="1" width="21" height="10" rx="2.5" stroke="#000" stroke-width="1" fill="none" opacity=".35"/><rect x="1" y="2" width="16" height="8" rx="1.5" fill="#000"/><path d="M22 4v4a2 2 0 0 0 0-4Z" fill="#000" opacity=".4"/></svg>
+      </div>
+    </div>
+    <div class="ios-nav">
+      <div class="ios-nav-back">‹ 返回</div>
+      <div class="ios-nav-title">项目设置</div>
+    </div>
+    <div class="ios-body">
+
+      <!-- 单位 -->
+      <div class="ios-section">
+        <div class="ios-section-header">单位</div>
+        <div class="ios-group">
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#d1e4ff">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="5" height="5" rx="1" fill="#007aff"/><rect x="9" y="2" width="5" height="5" rx="1" fill="#007aff" opacity=".5"/><rect x="2" y="9" width="5" height="5" rx="1" fill="#007aff" opacity=".5"/><rect x="9" y="9" width="5" height="5" rx="1" fill="#007aff" opacity=".3"/></svg>
+            </div>
+            <div class="ios-row-label">单位制</div>
+            <div class="ios-row-val">SI</div>
+            <div class="ios-chevron">›</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#d1e4ff">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 13V3M3 8h10M13 3v10" stroke="#007aff" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="ios-row-label">流量单位</div>
+            <div class="ios-row-val">L/s</div>
+            <div class="ios-chevron">›</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#d1e4ff">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="4" stroke="#007aff" stroke-width="1.5"/><path d="M8 4V2M8 14v-2M4 8H2M14 8h-2" stroke="#007aff" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="ios-row-label">压力单位</div>
+            <div class="ios-row-val">m</div>
+            <div class="ios-chevron">›</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 水力 -->
+      <div class="ios-section">
+        <div class="ios-section-header">水力</div>
+        <div class="ios-group">
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#d4f0df">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 13C3 8 13 8 13 3" stroke="#34c759" stroke-width="1.8" stroke-linecap="round"/><circle cx="13" cy="3" r="2" fill="#34c759"/><circle cx="3" cy="13" r="2" fill="#34c759"/></svg>
+            </div>
+            <div class="ios-row-label">摩阻公式</div>
+            <div class="ios-row-val">H-W</div>
+            <div class="ios-chevron">›</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#d4f0df">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 10l4-4 3 3 5-6" stroke="#34c759" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div class="ios-row-label">收敛控制</div>
+            <div class="ios-row-val">精度 0.001</div>
+            <div class="ios-chevron">›</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#d4f0df">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="6" r="3" stroke="#34c759" stroke-width="1.5"/><path d="M3 14c0-3 2.2-5 5-5s5 2 5 5" stroke="#34c759" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="ios-row-label">需水量模型</div>
+            <div class="ios-row-val">DDA</div>
+            <div class="ios-chevron">›</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 计算 -->
+      <div class="ios-section">
+        <div class="ios-section-header">计算</div>
+        <div class="ios-group">
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#ffecd1">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="#ff9500" stroke-width="1.5"/><path d="M8 5v3.5l2 2" stroke="#ff9500" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="ios-row-label">模拟类型</div>
+            <div class="ios-row-val">稳态</div>
+            <div class="ios-chevron">›</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#ffecd1">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="9" rx="1.5" stroke="#ff9500" stroke-width="1.5"/><path d="M2 7h12M5 4V2M11 4V2" stroke="#ff9500" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="ios-row-label">模拟时长 / 步长</div>
+            <div class="ios-row-val">24h / 1h</div>
+            <div class="ios-chevron">›</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#ffecd1">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8c0-3.3 2.7-6 6-6s6 2.7 6 6-2.7 6-6 6" stroke="#ff9500" stroke-width="1.5" stroke-linecap="round"/><path d="M8 5v3l2 2" stroke="#ff9500" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="ios-row-label">水质模拟</div>
+            <div class="ios-row-val">无</div>
+            <div class="ios-chevron">›</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#ffecd1">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 4h10M3 8h7M3 12h5" stroke="#ff9500" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="ios-row-label">报告输出项</div>
+            <div class="ios-row-val">全部</div>
+            <div class="ios-chevron">›</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 显示 -->
+      <div class="ios-section">
+        <div class="ios-section-header">显示</div>
+        <div class="ios-group">
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#ede0ff">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="5" cy="8" r="3" fill="#af52de" opacity=".8"/><circle cx="11" cy="8" r="3" fill="#af52de" opacity=".4"/></svg>
+            </div>
+            <div class="ios-row-label">对象颜色 / 尺寸</div>
+            <div class="ios-chevron">›</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#ede0ff">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="8" rx="1.5" stroke="#af52de" stroke-width="1.5"/><path d="M2 8h12" stroke="#af52de" stroke-width="1"/></svg>
+            </div>
+            <div class="ios-row-label">图例配色方案</div>
+            <div class="ios-row-val">蓝→红</div>
+            <div class="ios-chevron">›</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#ede0ff">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 4h10M3 8h7M3 12h5" stroke="#af52de" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="ios-row-label">标注显示</div>
+            <div class="ios-row-val">ID</div>
+            <div class="ios-chevron">›</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 通用 -->
+      <div class="ios-section">
+        <div class="ios-section-header">通用</div>
+        <div class="ios-group">
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#ffd6d0">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5" stroke="#ff6450" stroke-width="1.5"/><path d="M8 5v2M8 9v2" stroke="#ff6450" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="ios-row-label">外观</div>
+            <div class="ios-row-val">跟随系统</div>
+            <div class="ios-chevron">›</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-icon" style="background:#ffd6d0">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v2M8 12v2M2 8h2M12 8h2" stroke="#ff6450" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="8" r="3" stroke="#ff6450" stroke-width="1.5"/></svg>
+            </div>
+            <div class="ios-row-label">自动保存</div>
+            <div class="ios-toggle on" style="margin-left:auto"></div>
+          </div>
+        </div>
+        <div style="padding:0 16px;margin-top:6px;font-size:12px;color:rgba(0,0,0,.4);line-height:1.5">
+          以上设置保存在项目文件中，切换项目时自动切换。
+        </div>
+      </div>
+
+      <div class="ios-safe"></div>
+    </div>
+  </div>
+  <div style="text-align:center;font-size:12px;color:#888;margin-top:12px;font-family:var(--mono)">设置根目录</div>
+  </div>
+
+  <!-- Device 2: 水力 detail page -->
+  <div>
+  <div class="ios-device">
+    <div class="ios-sb">
+      <div class="ios-time">9:41</div>
+      <div class="ios-island" style="display:block;width:120px;height:34px;background:#000;border-radius:20px;margin:0"></div>
+      <div class="ios-batt">
+        <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0" y="1" width="21" height="10" rx="2.5" stroke="#000" stroke-width="1" fill="none" opacity=".35"/><rect x="1" y="2" width="16" height="8" rx="1.5" fill="#000"/><path d="M22 4v4a2 2 0 0 0 0-4Z" fill="#000" opacity=".4"/></svg>
+      </div>
+    </div>
+    <div class="ios-nav">
+      <div class="ios-nav-back">‹ 水力</div>
+      <div class="ios-nav-title">收敛控制</div>
+    </div>
+    <div class="ios-body">
+
+      <div class="ios-section">
+        <div class="ios-section-header">收敛精度</div>
+        <div class="ios-group">
+          <div class="ios-row">
+            <div class="ios-row-label">流量收敛精度<br><small style="font-size:12px;color:rgba(0,0,0,.4)">L/s · 各管段流量残差上限</small></div>
+            <div class="ios-detail-field">0.001</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-label">水头收敛精度<br><small style="font-size:12px;color:rgba(0,0,0,.4)">m · 各节点水头残差上限</small></div>
+            <div class="ios-detail-field">0.001</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ios-section">
+        <div class="ios-section-header">迭代控制</div>
+        <div class="ios-group">
+          <div class="ios-row">
+            <div class="ios-row-label">最大迭代次数</div>
+            <div class="ios-detail-field">40</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-label">使用相对收敛判据</div>
+            <div class="ios-toggle" style="margin-left:auto"></div>
+          </div>
+        </div>
+        <div style="padding:0 16px;margin-top:6px;font-size:12px;color:rgba(0,0,0,.4);line-height:1.5">相对判据使用残差与需水量的比值，适合量纲差异大的管网。</div>
+      </div>
+
+      <div class="ios-section">
+        <div class="ios-section-header">不平衡处理</div>
+        <div class="ios-group">
+          <div class="ios-row">
+            <div class="ios-row-label">处理策略</div>
+            <div class="ios-row-val">警告后继续</div>
+            <div class="ios-chevron">›</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-label">止回阀截止流速</div>
+            <div class="ios-detail-field">0.01 m/s</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Seg for 摩阻公式 inline -->
+      <div class="ios-section">
+        <div class="ios-section-header">摩阻公式</div>
+        <div class="ios-seg" style="margin:0 16px 0">
+          <div class="ios-seg-item on">H-W</div>
+          <div class="ios-seg-item">D-W</div>
+          <div class="ios-seg-item">C-M</div>
+        </div>
+        <div class="ios-group" style="margin-top:8px">
+          <div class="ios-row">
+            <div class="ios-row-label">粗糙度单位（当前）</div>
+            <div class="ios-row-val" style="color:rgba(0,0,0,.4)">C 系数</div>
+          </div>
+        </div>
+        <div style="padding:0 16px;margin-top:6px;font-size:12px;color:rgba(0,0,0,.4);line-height:1.5">
+          切换公式将影响管道粗糙度的含义和单位，请在切换后重新确认管道属性。
+        </div>
+      </div>
+
+      <div class="ios-section">
+        <div class="ios-section-header">需水量模型</div>
+        <div class="ios-seg" style="margin:0 16px 0">
+          <div class="ios-seg-item on">DDA 需水量驱动</div>
+          <div class="ios-seg-item">PDA 压力驱动</div>
+        </div>
+        <div class="ios-group" style="margin-top:8px;opacity:.4">
+          <div class="ios-row">
+            <div class="ios-row-label">最小服务压力</div>
+            <div class="ios-detail-field">0.0 m</div>
+          </div>
+          <div class="ios-row">
+            <div class="ios-row-label">设计服务压力</div>
+            <div class="ios-detail-field">20.0 m</div>
+          </div>
+        </div>
+        <div style="padding:0 16px;margin-top:6px;font-size:12px;color:rgba(0,0,0,.4);line-height:1.5">PDA 模式下压力子参数才生效。</div>
+      </div>
+
+      <div class="ios-safe"></div>
+    </div>
+  </div>
+  <div style="text-align:center;font-size:12px;color:#888;margin-top:12px;font-family:var(--mono)">水力参数详情页</div>
+  </div>
+
+</div>
+
+</body>
+</html>

@@ -8,6 +8,16 @@ import UniformTypeIdentifiers
 import EPANET3Bridge
 import EPANET3Renderer
 
+struct RecentFileItem: Codable, Identifiable, Equatable {
+    var path: String
+    var displayName: String
+    var lastOpenedAt: Date
+    var nodeCount: Int?
+    var linkCount: Int?
+
+    var id: String { path }
+}
+
 /// 最近一次运行计算的结果，供界面与后续查询展示。
 enum RunResult: Equatable {
     case success(elapsed: TimeInterval)
@@ -30,6 +40,10 @@ enum ResultOverlayMode: String, CaseIterable {
 
 @MainActor
 public final class AppState: ObservableObject {
+    private enum StorageKeys {
+        static let recentFiles = "epanet3.recentFiles"
+    }
+
     @Published var scene: NetworkScene?
     @Published var project: EpanetProject?
     @Published var filePath: String?
@@ -66,8 +80,22 @@ public final class AppState: ObservableObject {
     @Published var nodePressureValues: [Float] = []
     /// D4：管段流量结果（按管段索引）。
     @Published var linkFlowValues: [Float] = []
+    /// 启动页最近打开文件列表（按时间倒序）。
+    @Published var recentFiles: [RecentFileItem] = []
 
-    public init() {}
+    #if os(macOS)
+    /// 当前文件的 security-scoped URL，用于保持读写权限。
+    private var securityScopedFileURL: URL?
+    #endif
+
+    /// 打开 .inp 时解码后的全文快照；用于「保存」时按原结构写回，避免 ProjectWriter 重写导致丢章节/改顺序。
+    private var inpSourceSnapshot: String?
+    /// 属性面板等写入后待同步到 .inp 的字段级修改；文件菜单「保存」只应用这些补丁，不整文件重写数据行。
+    private var inpPendingSaveDelta = InpSaveDelta()
+
+    public init() {
+        loadRecentFilesFromStorage()
+    }
 
     func setEditorMode(_ mode: EditorMode) {
         editorMode = mode
@@ -217,34 +245,67 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// D1：更新节点核心属性（第二版：高程、基础需水量、X/Y 坐标）。
+    /// D1：更新节点核心属性（第二版：高程、基础需水量、X/Y 坐标）。`changedFields` 决定写引擎与待落盘 .inp 的字段子集。
     func updateNodeCoreProperties(
         nodeID: String,
         elevation: Double,
         baseDemand: Double,
         xCoord: Double,
-        yCoord: Double
+        yCoord: Double,
+        changedFields: Set<InpNodePatchField>
     ) {
+        guard !changedFields.isEmpty else { return }
         applyProjectMutation(sceneLabel: "更新节点属性") { p in
             let nodeIndex = try p.getNodeIndex(id: nodeID)
-            try p.setNodeValue(nodeIndex: nodeIndex, param: .elevation, value: elevation)
-            try p.setNodeValue(nodeIndex: nodeIndex, param: .basedemand, value: baseDemand)
-            try p.setNodeValue(nodeIndex: nodeIndex, param: .xcoord, value: xCoord)
-            try p.setNodeValue(nodeIndex: nodeIndex, param: .ycoord, value: yCoord)
+            if changedFields.contains(.elevation) {
+                try p.setNodeValue(nodeIndex: nodeIndex, param: .elevation, value: elevation)
+            }
+            if changedFields.contains(.baseDemand) {
+                try p.setNodeValue(nodeIndex: nodeIndex, param: .basedemand, value: baseDemand)
+            }
+            if changedFields.contains(.xCoord) {
+                try p.setNodeValue(nodeIndex: nodeIndex, param: .xcoord, value: xCoord)
+            }
+            if changedFields.contains(.yCoord) {
+                try p.setNodeValue(nodeIndex: nodeIndex, param: .ycoord, value: yCoord)
+            }
             selectedNodeID = nodeID
             selectedLinkID = nil
         }
+        if errorMessage == nil {
+            inpPendingSaveDelta.record(
+                nodeID: nodeID,
+                fields: changedFields,
+                baseDemandForFile: changedFields.contains(.baseDemand) ? baseDemand : nil
+            )
+        }
     }
 
-    /// D1：更新管段核心属性（首批：长度、管径、糙率）。
-    func updateLinkCoreProperties(linkID: String, length: Double, diameter: Double, roughness: Double) {
+    /// D1：更新管段核心属性（首批：长度、管径、糙率）。`changedFields` 决定写引擎与待落盘 .inp 的字段子集。
+    func updateLinkCoreProperties(
+        linkID: String,
+        length: Double,
+        diameter: Double,
+        roughness: Double,
+        changedFields: Set<InpLinkPatchField>
+    ) {
+        guard !changedFields.isEmpty else { return }
         applyProjectMutation(sceneLabel: "更新管段属性") { p in
             let linkIndex = try p.getLinkIndex(id: linkID)
-            try p.setLinkValue(linkIndex: linkIndex, param: .length, value: length)
-            try p.setLinkValue(linkIndex: linkIndex, param: .diameter, value: diameter)
-            try p.setLinkValue(linkIndex: linkIndex, param: .roughness, value: roughness)
+            if changedFields.contains(.length) {
+                try p.setLinkValue(linkIndex: linkIndex, param: .length, value: length)
+            }
+            if changedFields.contains(.diameter) {
+                try p.setLinkValue(linkIndex: linkIndex, param: .diameter, value: diameter)
+            }
+            if changedFields.contains(.roughness) {
+                try p.setLinkValue(linkIndex: linkIndex, param: .roughness, value: roughness)
+            }
             selectedLinkID = linkID
             selectedNodeID = nil
+        }
+        if errorMessage == nil {
+            inpPendingSaveDelta.record(linkID: linkID, fields: changedFields)
         }
     }
 
@@ -263,6 +324,7 @@ public final class AppState: ObservableObject {
             isPropertyPanelVisible = true
         }
         if errorMessage == nil {
+            invalidateInpSourceSnapshot()
             requestFocusOnSelection()
         }
     }
@@ -290,6 +352,7 @@ public final class AppState: ObservableObject {
             isPropertyPanelVisible = true
         }
         if errorMessage == nil {
+            invalidateInpSourceSnapshot()
             requestFocusOnSelection()
         }
     }
@@ -306,6 +369,7 @@ public final class AppState: ObservableObject {
                 editorMode = .delete
                 isPropertyPanelVisible = true
             }
+            if errorMessage == nil { invalidateInpSourceSnapshot() }
             return
         }
         if let linkID = selectedLinkID {
@@ -318,6 +382,7 @@ public final class AppState: ObservableObject {
                 editorMode = .delete
                 isPropertyPanelVisible = true
             }
+            if errorMessage == nil { invalidateInpSourceSnapshot() }
             return
         }
         errorMessage = "删除失败: 当前没有选中节点或管段。"
@@ -339,6 +404,9 @@ public final class AppState: ObservableObject {
             try p.setTimeParam(param: .duration, value: duration)
             try p.setTimeParam(param: .hydStep, value: hydraulicStep)
             try p.setTimeParam(param: .reportStep, value: reportStep)
+        }
+        if errorMessage == nil {
+            invalidateInpSourceSnapshot()
         }
     }
 
@@ -375,6 +443,8 @@ public final class AppState: ObservableObject {
             project = proj
             filePath = tempURL.path
             inpFlowUnits = InpOptionsParser.parseFlowUnits(path: tempURL.path) ?? target
+            inpSourceSnapshot = rewritten
+            inpPendingSaveDelta.clear()
             selectedNodeID = previousSelection.0
             selectedLinkID = previousSelection.1
             isPropertyPanelVisible = previousSelection.2
@@ -405,6 +475,7 @@ public final class AppState: ObservableObject {
             editorMode = .delete
             isPropertyPanelVisible = true
         }
+        if errorMessage == nil { invalidateInpSourceSnapshot() }
     }
 
     /// D2 第二版：按管段 ID 直接删除。
@@ -425,6 +496,7 @@ public final class AppState: ObservableObject {
             editorMode = .delete
             isPropertyPanelVisible = true
         }
+        if errorMessage == nil { invalidateInpSourceSnapshot() }
     }
 
     private static nonisolated func formatLocalizedEpanetError(_ error: EpanetError, scene: String) -> String {
@@ -479,6 +551,9 @@ public final class AppState: ObservableObject {
         panel.title = "选择 .inp 管网文件"
         panel.message = "仅支持 .inp 格式"
         if panel.runModal() == .OK, let url = panel.url {
+            stopSecurityScopedAccess()
+            _ = url.startAccessingSecurityScopedResource()
+            securityScopedFileURL = url
             load(path: url.path)
         }
         NSCursor.arrow.set()
@@ -492,23 +567,167 @@ public final class AppState: ObservableObject {
         load(path: url.path)
     }
 
+    func openRecentFile(_ item: RecentFileItem) {
+        let cleanPath = item.path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanPath.isEmpty else {
+            recentFiles.removeAll { $0.path == item.path }
+            saveRecentFilesToStorage()
+            errorMessage = "无效的路径记录，已从近期打开中移除。"
+            return
+        }
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: cleanPath, isDirectory: &isDirectory)
+        guard exists, !isDirectory.boolValue else {
+            recentFiles.removeAll { $0.path.trimmingCharacters(in: .whitespacesAndNewlines) == cleanPath }
+            saveRecentFilesToStorage()
+            let name = URL(fileURLWithPath: cleanPath).lastPathComponent
+            errorMessage = "文件不存在或已移动，已从近期打开中移除：\(name)"
+            return
+        }
+        load(path: cleanPath)
+    }
+
+    /// 新建：清空当前项目，回到空白状态。
+    public func newProject() {
+        #if os(macOS)
+        stopSecurityScopedAccess()
+        #endif
+        project = nil
+        scene = nil
+        filePath = nil
+        errorMessage = nil
+        runResult = nil
+        inpFlowUnits = nil
+        editorMode = .browse
+        selectedNodeIndex = nil
+        selectedLinkIndex = nil
+        selectedNodeID = nil
+        selectedLinkID = nil
+        isPropertyPanelVisible = false
+        errorFocusNodeIndex = nil
+        errorFocusLinkIndex = nil
+        resultOverlayMode = .none
+        nodePressureValues = []
+        linkFlowValues = []
+        inpSourceSnapshot = nil
+        inpPendingSaveDelta.clear()
+    }
+
+    /// 增删节点/管段或改写全局计算参数后，快照与磁盘结构不再一致，需退回完整重写或下次保存前重新加载。
+    private func invalidateInpSourceSnapshot() {
+        inpSourceSnapshot = nil
+        inpPendingSaveDelta.clear()
+    }
+
+    /// 将当前 project 写入路径：若有快照则仅应用待写增量补丁；无待写项则跳过磁盘写入。无快照时用 ProjectWriter 全量保存。
+    private func writeProjectToPath(_ path: String) throws {
+        guard let p = project else {
+            throw NSError(domain: "AppState", code: 1, userInfo: [NSLocalizedDescriptionKey: "无项目"])
+        }
+        if let snap = inpSourceSnapshot {
+            if inpPendingSaveDelta.isEmpty {
+                return
+            }
+            let merged = InpPreservingSaver.applyPatches(original: snap, project: p, delta: inpPendingSaveDelta)
+            try merged.write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
+            inpSourceSnapshot = merged
+            inpPendingSaveDelta.clear()
+        } else {
+            try p.save(path: path)
+            inpSourceSnapshot = try? InpFileTextReader.contentsOfFile(path: path)
+            inpPendingSaveDelta.clear()
+        }
+    }
+
+    /// 保存：若有当前路径则保存到该路径，否则执行另存为。
+    public func saveFile() {
+        guard project != nil else {
+            errorMessage = "保存失败: 当前没有打开的项目。"
+            return
+        }
+        if let path = filePath, !path.isEmpty {
+            do {
+                try writeProjectToPath(path)
+                errorMessage = nil
+            } catch let error as EpanetError {
+                errorMessage = Self.formatLocalizedEpanetError(error, scene: "保存失败")
+            } catch {
+                errorMessage = "保存失败: \(error)"
+            }
+        } else {
+            saveAsFile()
+        }
+    }
+
+    /// 另存为：弹出保存对话框，保存到用户选择的路径。
+    public func saveAsFile() {
+        #if os(macOS)
+        guard project != nil else {
+            errorMessage = "另存为失败: 当前没有打开的项目。"
+            return
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "inp") ?? .plainText]
+        panel.title = "另存为 .inp 文件"
+        panel.message = "仅支持 .inp 格式"
+        if let current = filePath, !current.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: current).deletingLastPathComponent()
+            panel.nameFieldStringValue = URL(fileURLWithPath: current).lastPathComponent
+        }
+        if panel.runModal() == .OK, let url = panel.url {
+            stopSecurityScopedAccess()
+            _ = url.startAccessingSecurityScopedResource()
+            securityScopedFileURL = url
+            do {
+                try writeProjectToPath(url.path)
+                filePath = url.path
+                errorMessage = nil
+            } catch let error as EpanetError {
+                errorMessage = Self.formatLocalizedEpanetError(error, scene: "另存为失败")
+            } catch {
+                errorMessage = "另存为失败: \(error)"
+            }
+        }
+        NSCursor.arrow.set()
+        #else
+        errorMessage = "另存为: iOS 暂不支持，请使用打开功能选择保存位置。"
+        #endif
+    }
+
+    /// 关闭：清空当前项目，回到空白状态。
+    public func closeFile() {
+        newProject()
+    }
+
     func load(path: String) {
         isLoading = true
         errorMessage = nil
+        inpSourceSnapshot = nil
+        inpPendingSaveDelta.clear()
+        let pathCopy = path
+        let prefetchedFileData: Data? = try? Data(contentsOf: URL(fileURLWithPath: pathCopy))
         Task.detached(priority: .userInitiated) {
+            let inpSnapshot: String? = if let d = prefetchedFileData {
+                InpFileTextReader.decodeInpData(d)
+            } else {
+                try? InpFileTextReader.contentsOfFile(path: pathCopy)
+            }
             var loadedProject: EpanetProject?
             do {
                 let proj = EpanetProject()
                 loadedProject = proj
-                try proj.load(path: path)
+                try proj.load(path: pathCopy)
                 let scene = try Self.buildScene(from: proj)
-                let flowUnits = InpOptionsParser.parseFlowUnits(path: path)
+                let nodeCount = try proj.nodeCount()
+                let linkCount = try proj.linkCount()
+                let flowUnits = InpOptionsParser.parseFlowUnits(path: pathCopy)
                 await MainActor.run { [weak self] in
                     self?.project = proj
                     self?.scene = scene
-                    self?.filePath = path
+                    self?.filePath = pathCopy
                     self?.errorMessage = nil
                     self?.inpFlowUnits = flowUnits
+                    self?.inpSourceSnapshot = inpSnapshot
                     self?.editorMode = .browse
                     self?.selectedNodeIndex = nil
                     self?.selectedLinkIndex = nil
@@ -521,17 +740,23 @@ public final class AppState: ObservableObject {
                     self?.nodePressureValues = []
                     self?.linkFlowValues = []
                     self?.refreshSceneFromProject(preserveSelection: false, sceneLabel: "加载 .inp")
+                    self?.recordRecentFile(path: pathCopy, nodeCount: nodeCount, linkCount: linkCount)
                     self?.isLoading = false
                 }
             } catch EpanetError.apiError(200) {
                 do {
-                    let scene = try InpDisplayParser.parse(path: path)
+                    let scene: NetworkScene
+                    if let d = prefetchedFileData {
+                        scene = try InpDisplayParser.parse(content: InpFileTextReader.decodeInpData(d))
+                    } else {
+                        scene = try InpDisplayParser.parse(path: pathCopy)
+                    }
                     await MainActor.run { [weak self] in
                         self?.project = nil
                         self?.scene = scene
-                        self?.filePath = path
+                        self?.filePath = pathCopy
                         self?.errorMessage = "仅显示模式（不可计算）"
-                        self?.inpFlowUnits = InpOptionsParser.parseFlowUnits(path: path)
+                        self?.inpFlowUnits = InpOptionsParser.parseFlowUnits(path: pathCopy)
                         self?.editorMode = .browse
                         self?.selectedNodeIndex = nil
                         self?.selectedLinkIndex = nil
@@ -543,6 +768,7 @@ public final class AppState: ObservableObject {
                         self?.resultOverlayMode = .none
                         self?.nodePressureValues = []
                         self?.linkFlowValues = []
+                        self?.recordRecentFile(path: pathCopy, nodeCount: scene.nodes.count, linkCount: scene.links.count)
                         self?.isLoading = false
                     }
                 } catch {
@@ -552,6 +778,7 @@ public final class AppState: ObservableObject {
                         self?.project = nil
                         self?.filePath = nil
                         self?.inpFlowUnits = nil
+                        self?.inpSourceSnapshot = nil
                         self?.errorFocusNodeIndex = nil
                         self?.errorFocusLinkIndex = nil
                         self?.isLoading = false
@@ -566,6 +793,7 @@ public final class AppState: ObservableObject {
                     self?.project = nil
                     self?.filePath = nil
                     self?.inpFlowUnits = nil
+                    self?.inpSourceSnapshot = nil
                     self?.errorFocusNodeIndex = focus.nodeIndex
                     self?.errorFocusLinkIndex = focus.linkIndex
                     self?.isLoading = false
@@ -577,6 +805,7 @@ public final class AppState: ObservableObject {
                     self?.project = nil
                     self?.filePath = nil
                     self?.inpFlowUnits = nil
+                    self?.inpSourceSnapshot = nil
                     self?.errorFocusNodeIndex = nil
                     self?.errorFocusLinkIndex = nil
                     self?.isLoading = false
@@ -610,6 +839,8 @@ public final class AppState: ObservableObject {
                 let elapsed = CFAbsoluteTimeGetCurrent() - start
                 await MainActor.run { [weak self] in
                     self?.project = proj
+                    self?.inpSourceSnapshot = try? InpFileTextReader.contentsOfFile(path: inpPath)
+                    self?.inpPendingSaveDelta.clear()
                     self?.selectedNodeID = previousSelection.0
                     self?.selectedLinkID = previousSelection.1
                     self?.isPropertyPanelVisible = previousSelection.2
@@ -772,5 +1003,56 @@ public final class AppState: ObservableObject {
         if upperTrimmedLine.starts(with: "FLOWUNITS") { return true }
         if upperTrimmedLine.starts(with: "FLOW UNITS") { return true }
         return false
+    }
+
+    #if os(macOS)
+    private func stopSecurityScopedAccess() {
+        if let url = securityScopedFileURL {
+            url.stopAccessingSecurityScopedResource()
+            securityScopedFileURL = nil
+        }
+    }
+    #endif
+
+    private func loadRecentFilesFromStorage() {
+        guard let data = UserDefaults.standard.data(forKey: StorageKeys.recentFiles) else {
+            recentFiles = []
+            return
+        }
+        do {
+            let decoded = try JSONDecoder().decode([RecentFileItem].self, from: data)
+            recentFiles = decoded.sorted { $0.lastOpenedAt > $1.lastOpenedAt }
+        } catch {
+            recentFiles = []
+        }
+    }
+
+    private func saveRecentFilesToStorage() {
+        do {
+            let data = try JSONEncoder().encode(recentFiles)
+            UserDefaults.standard.set(data, forKey: StorageKeys.recentFiles)
+        } catch {
+            // 最近文件保存失败不阻断主流程。
+        }
+    }
+
+    private func recordRecentFile(path: String, nodeCount: Int?, linkCount: Int?) {
+        let cleanPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanPath.isEmpty else { return }
+
+        let item = RecentFileItem(
+            path: cleanPath,
+            displayName: URL(fileURLWithPath: cleanPath).lastPathComponent,
+            lastOpenedAt: Date(),
+            nodeCount: nodeCount,
+            linkCount: linkCount
+        )
+
+        recentFiles.removeAll { $0.path == cleanPath }
+        recentFiles.insert(item, at: 0)
+        if recentFiles.count > 12 {
+            recentFiles = Array(recentFiles.prefix(12))
+        }
+        saveRecentFilesToStorage()
     }
 }

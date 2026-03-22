@@ -10,7 +10,7 @@ struct InpOptionsParser {
 
     /// 解析 path 指向的 .inp 的 [OPTION]/[OPTIONS]，返回 Flow Units 关键字（如 "GPM", "LPS"）；无法解析时返回 nil。
     static func parseFlowUnits(path: String) -> String? {
-        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        guard let content = try? InpFileTextReader.contentsOfFile(path: path) else { return nil }
         let lines = content.components(separatedBy: .newlines)
         var inOptions = false
         for rawLine in lines {
@@ -79,5 +79,78 @@ struct InpOptionsParser {
     static func isUSCustomary(flowUnits: String?) -> Bool {
         guard let u = flowUnits?.uppercased().trimmingCharacters(in: .whitespaces), !u.isEmpty else { return false }
         return Self.usFlowUnits.contains(u)
+    }
+
+    /// 从 .inp [OPTIONS] 解析水头损失公式；返回 "H-W", "D-W", "C-M" 之一，或 nil。
+    static func parseHeadloss(path: String) -> String? {
+        return parseStringOption(path: path, keys: ["HEADLOSS"])
+    }
+
+    /// 从 .inp [OPTIONS] 解析需水量模型；返回 "DDA", "PDA", "FIXED" 等，或 nil。
+    static func parseDemandModel(path: String) -> String? {
+        return parseStringOption(path: path, keys: ["DEMAND_MODEL", "DEMANDMODEL"])
+    }
+
+    /// 从 .inp [OPTIONS] 解析水质类型；返回 "NONE", "CHEMICAL", "AGE", "TRACE" 等，或 nil。
+    static func parseQualityType(path: String) -> String? {
+        return parseStringOption(path: path, keys: ["QUALITY"])
+    }
+
+    /// 从 .inp [OPTIONS] 解析粘度系数，默认 1.0。
+    static func parseViscosity(path: String) -> Double? {
+        return parseDoubleOption(path: path, keys: ["VISCOSITY"])
+    }
+
+    /// 从 .inp [OPTIONS] 解析扩散系数，默认 1.0。
+    static func parseDiffusivity(path: String) -> Double? {
+        return parseDoubleOption(path: path, keys: ["DIFFUSIVITY"])
+    }
+
+    private static func parseStringOption(path: String, keys: [String]) -> String? {
+        guard let content = try? InpFileTextReader.contentsOfFile(path: path) else { return nil }
+        let lines = content.components(separatedBy: .newlines)
+        var inOptions = false
+        for rawLine in lines {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix(";") { continue }
+            if line.hasPrefix("[") {
+                let upper = line.uppercased()
+                inOptions = upper.starts(with: "[OPTION")
+                continue
+            }
+            if inOptions {
+                let tokens = line.split(whereSeparator: { $0.isWhitespace }).map { String($0) }
+                guard tokens.count >= 2 else { continue }
+                let key = tokens[0].uppercased()
+                if keys.contains(key) {
+                    return tokens[1].uppercased()
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func parseDoubleOption(path: String, keys: [String]) -> Double? {
+        guard let content = try? InpFileTextReader.contentsOfFile(path: path) else { return nil }
+        let lines = content.components(separatedBy: .newlines)
+        var inOptions = false
+        for rawLine in lines {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix(";") { continue }
+            if line.hasPrefix("[") {
+                let upper = line.uppercased()
+                inOptions = upper.starts(with: "[OPTION")
+                continue
+            }
+            if inOptions {
+                let tokens = line.split(whereSeparator: { $0.isWhitespace }).map { String($0) }
+                guard tokens.count >= 2 else { continue }
+                let key = tokens[0].uppercased()
+                if keys.contains(key) {
+                    return Double(tokens[1])
+                }
+            }
+        }
+        return nil
     }
 }

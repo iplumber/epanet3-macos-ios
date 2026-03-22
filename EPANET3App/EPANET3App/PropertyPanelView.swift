@@ -6,6 +6,11 @@ import AppKit
 import UIKit
 #endif
 
+/// 属性面板数值编辑后防抖再提交引擎，避免每个按键都触发求解/刷新。
+private enum PropertyInspectorAutosave {
+    static let fieldCommitDebounceNs: UInt64 = 450_000_000
+}
+
 /// 与 Flow Units 联动的属性单位标签：GPM/CFS/MGD/IMGD/AFD → 美制；LPS/LPM/MLD/CMH/CMD → 公制。
 /// 美制/公制由 inp 的 Flow Units 决定；未解析到时与引擎默认一致按 GPM（美制）。
 private struct PropertyUnits {
@@ -55,85 +60,194 @@ private struct PropertyUnits {
 }
 
 struct PropertyPanelView: View {
+    @Environment(\.colorScheme) var colorScheme
+    private enum InspectorTab: String {
+        case properties = "属性"
+        case styles = "样式"
+    }
+
     @ObservedObject var appState: AppState
     let selectedNodeIndex: Int?
     let selectedLinkIndex: Int?
     let onClose: () -> Void
+    @State private var activeTab: InspectorTab = .properties
+
+    private var surface: Color { colorScheme == .dark ? DesignColors.darkSurface : DesignColors.lightSurface }
+    private var surface2: Color { colorScheme == .dark ? DesignColors.darkSurface2 : DesignColors.lightSurface2 }
+    private var border: Color { colorScheme == .dark ? DesignColors.darkBorder : DesignColors.lightBorder }
+    private var text2: Color { colorScheme == .dark ? DesignColors.darkText2 : DesignColors.lightText2 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("属性")
-                    .font(.headline)
-                Spacer()
-                Button(action: onClose) { Image(systemName: "xmark.circle.fill") }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            if appState.project != nil {
-                Text("单位: \(units.flowUnitDisplay) (\(units.isUS ? "美制" : "公制"))")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
-            }
-            if let proj = appState.project {
-                SimulationSettingsSection(appState: appState, project: proj, units: units)
-                Divider().padding(.vertical, 6)
-            }
-            if appState.project != nil, appState.editorMode == .add {
-                AddToolsSection(appState: appState, units: units)
-                Divider().padding(.vertical, 6)
-            }
-            if appState.project != nil, appState.editorMode == .delete {
-                DeleteToolsSection(appState: appState)
-                Divider().padding(.vertical, 6)
-            }
-            if let proj = appState.project {
-                if let i = selectedNodeIndex, i >= 0 {
-                    NodeEditorSection(appState: appState, project: proj, nodeIndex: i, units: units)
-                    Divider().padding(.vertical, 6)
-                    PropertyTableView(rows: nodeRows(project: proj, nodeIndex: i))
-                } else if let i = selectedLinkIndex, i >= 0 {
-                    LinkEditorSection(appState: appState, project: proj, linkIndex: i, units: units)
-                    Divider().padding(.vertical, 6)
-                    PropertyTableView(rows: linkRows(project: proj, linkIndex: i))
-                } else {
-                    Text("未选中对象")
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                    PropertyTableView(rows: [])
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    objectTypeLabel
+                    objectIDText
+                    Spacer(minLength: 8)
                 }
-            } else {
-                Text("仅显示模式，无属性数据")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+                HStack(spacing: 2) {
+                    tabButton(.properties)
+                    tabButton(.styles)
+                }
+                .padding(2)
+                .background(surface2, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(border, lineWidth: 1))
+            }
+            .padding(.horizontal, DesignSizes.inspectorPaddingH)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+            .background(surface)
+            .overlay(Rectangle().frame(height: 1).foregroundColor(border), alignment: .bottom)
+
+            ScrollView {
+                switch activeTab {
+                case .properties:
+                    propertiesTab
+                case .styles:
+                    stylesTab
+                }
             }
             Spacer(minLength: 0)
         }
-        .background(platformWindowBackgroundColor)
-        .overlay(Rectangle().frame(width: 1).foregroundColor(.secondary.opacity(0.3)), alignment: .leading)
+        .background(surface)
+        .overlay(Rectangle().frame(width: 1).foregroundColor(border), alignment: .leading)
     }
 
     private var units: PropertyUnits {
         PropertyUnits(flowUnits: appState.inpFlowUnits)
     }
-    private var platformWindowBackgroundColor: Color {
-        #if os(macOS)
-        return Color(NSColor.windowBackgroundColor)
-        #else
-        return Color(UIColor.systemBackground)
-        #endif
+
+    private var objectTypeLabel: some View {
+        let accentColor = colorScheme == .dark ? DesignColors.darkAccent : DesignColors.lightAccent
+        let (label, tint): (String, Color) = {
+            if selectedNodeIndex != nil { return ("节点 Junction", accentColor) }
+            if selectedLinkIndex != nil { return ("管段 Pipe", Color.orange) }
+            return ("未选中", text2)
+        }()
+        return HStack(spacing: 6) {
+            Circle().fill(tint).frame(width: 7, height: 7)
+            Text(label).font(DesignFonts.fieldName).fontWeight(.medium).foregroundColor(tint)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(tint.opacity(0.12), in: Capsule())
     }
 
-    private func nodeRows(project: EpanetProject, nodeIndex: Int) -> [(String, String)] {
+    private var objectIDText: some View {
+        let id: String = {
+            guard let proj = appState.project else { return "—" }
+            if let i = selectedNodeIndex { return (try? proj.getNodeId(index: i)) ?? "—" }
+            if let i = selectedLinkIndex { return (try? proj.getLinkId(index: i)) ?? "—" }
+            return "—"
+        }()
+        return Text(id)
+            .font(DesignFonts.fieldValue)
+            .foregroundColor(text2)
+    }
+
+    private func tabButton(_ tab: InspectorTab) -> some View {
+        Button { activeTab = tab } label: {
+            Text(tab.rawValue)
+                .font(DesignFonts.tabLabel)
+                .foregroundColor(activeTab == tab ? (colorScheme == .dark ? DesignColors.darkText : DesignColors.lightText) : text2)
+                .frame(maxWidth: .infinity)
+                .frame(height: DesignSizes.tabHeight)
+        }
+        .buttonStyle(.plain)
+        .background(activeTab == tab ? surface : .clear, in: RoundedRectangle(cornerRadius: DesignSizes.tabCornerRadius))
+        .overlay(activeTab == tab ? RoundedRectangle(cornerRadius: DesignSizes.tabCornerRadius).stroke(Color.black.opacity(0.06), lineWidth: 1) : nil)
+    }
+
+    @ViewBuilder
+    private var propertiesTab: some View {
+        if let proj = appState.project {
+            if appState.editorMode == .add {
+                AddToolsSection(appState: appState, units: units)
+                Divider().padding(.vertical, 6)
+            }
+            if appState.editorMode == .delete {
+                DeleteToolsSection(appState: appState)
+                Divider().padding(.vertical, 6)
+            }
+            if let i = selectedNodeIndex, i >= 0 {
+                NodeBasicInfoSection(appState: appState, project: proj, nodeIndex: i, units: units)
+            } else if let i = selectedLinkIndex, i >= 0 {
+                LinkBasicInfoSection(appState: appState, project: proj, linkIndex: i, units: units)
+            } else {
+                Text("未选中对象")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+
+            Divider().padding(.vertical, 6)
+
+            if case .success(let elapsed) = appState.runResult {
+                HStack(spacing: 8) {
+                    Circle().fill(Color.green).frame(width: 8, height: 8)
+                    Text("最近计算成功 · \(String(format: "%.2f", elapsed)) 秒")
+                        .font(.caption)
+                        .foregroundColor(.green)
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 4)
+            } else if case .failure(let message) = appState.runResult {
+                Text("最近计算失败：\(message)")
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
+            } else {
+                Text("尚未运行计算")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
+            }
+            if let i = selectedNodeIndex, i >= 0 {
+                PropertyFieldGroup(label: "计算结果", rows: nodeResultRows(project: proj, nodeIndex: i))
+            } else if let i = selectedLinkIndex, i >= 0 {
+                PropertyFieldGroup(label: "计算结果", rows: linkResultRows(project: proj, linkIndex: i))
+            } else {
+                Text("选择对象后显示结果项")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+        } else {
+            Text("仅显示模式，无属性数据")
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+        }
+    }
+
+    private var stylesTab: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("样式设置")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+            Text("当前版本为设计稿一致性实现，样式项先提供基础控制入口。")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 12)
+            Group {
+                HStack { Text("节点大小"); Spacer(); Text("默认").foregroundColor(.secondary) }
+                HStack { Text("管线宽度"); Spacer(); Text("默认").foregroundColor(.secondary) }
+                HStack { Text("标注显示"); Spacer(); Text("开启").foregroundColor(.secondary) }
+                HStack { Text("主题"); Spacer(); Text("浅色").foregroundColor(.secondary) }
+            }
+            .font(.caption)
+            .padding(.horizontal, 12)
+        }
+    }
+
+    private func nodeResultRows(project: EpanetProject, nodeIndex: Int) -> [(String, String)] {
         var rows: [(String, String)] = []
         let u = units
         do {
-            rows.append(("ID", try project.getNodeId(index: nodeIndex)))
-            rows.append((u.elevation, String(format: "%.2f", try project.getNodeValue(nodeIndex: nodeIndex, param: .elevation))))
             rows.append((u.head, String(format: "%.2f", try project.getNodeValue(nodeIndex: nodeIndex, param: .head))))
             rows.append((u.pressure, String(format: "%.2f", try project.getNodeValue(nodeIndex: nodeIndex, param: .pressure))))
             rows.append(("需水量 (\(u.flowUnitDisplay))", String(format: "%.4f", try project.getNodeValue(nodeIndex: nodeIndex, param: .actualdemand))))
@@ -141,161 +255,15 @@ struct PropertyPanelView: View {
         return rows
     }
 
-    private func linkRows(project: EpanetProject, linkIndex: Int) -> [(String, String)] {
+    private func linkResultRows(project: EpanetProject, linkIndex: Int) -> [(String, String)] {
         var rows: [(String, String)] = []
         let u = units
         do {
-            rows.append(("ID", try project.getLinkId(index: linkIndex)))
-            let (n1, n2) = try project.getLinkNodes(linkIndex: linkIndex)
-            rows.append(("节点", "\(n1 + 1) → \(n2 + 1)"))
             rows.append(("流量 (\(u.flowUnitDisplay))", String(format: "%.4f", try project.getLinkValue(linkIndex: linkIndex, param: .flow))))
             rows.append((u.velocity, String(format: "%.4f", try project.getLinkValue(linkIndex: linkIndex, param: .velocity))))
-            rows.append((u.length, String(format: "%.2f", try project.getLinkValue(linkIndex: linkIndex, param: .length))))
-            rows.append((u.diameter, String(format: "%.2f", try project.getLinkValue(linkIndex: linkIndex, param: .diameter))))
+            rows.append(("水头损失", String(format: "%.4f", try project.getLinkValue(linkIndex: linkIndex, param: .headloss))))
         } catch {}
         return rows
-    }
-}
-
-private struct SimulationSettingsSection: View {
-    @ObservedObject var appState: AppState
-    let project: EpanetProject
-    let units: PropertyUnits
-
-    @State private var trialsText = ""
-    @State private var accuracyText = ""
-    @State private var demandMultText = ""
-    @State private var durationText = ""
-    @State private var hydStepText = ""
-    @State private var reportStepText = ""
-    @State private var flowUnitsChoice = "GPM"
-    @State private var message: String?
-    @State private var isError = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("计算参数")
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 12)
-            Text("流量单位: \(units.flowUnitDisplay)")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 12)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Flow Units（重载切换）")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Picker("Flow Units", selection: $flowUnitsChoice) {
-                    Text("GPM").tag("GPM")
-                    Text("LPS").tag("LPS")
-                }
-                .pickerStyle(.segmented)
-                Button("应用 Flow Units 切换（重载）") { switchFlowUnits() }
-                    .buttonStyle(.borderedProminent)
-            }
-            .padding(.horizontal, 12)
-
-            VStack(alignment: .leading, spacing: 6) {
-                TextField("最大迭代次数 (TRIALS)", text: $trialsText)
-                    .textFieldStyle(.roundedBorder)
-                TextField("收敛精度 (ACCURACY)", text: $accuracyText)
-                    .textFieldStyle(.roundedBorder)
-                TextField("需水乘数 (DEMAND MULT)", text: $demandMultText)
-                    .textFieldStyle(.roundedBorder)
-                TextField("计算时长秒 (DURATION)", text: $durationText)
-                    .textFieldStyle(.roundedBorder)
-                TextField("水力步长秒 (HYD STEP)", text: $hydStepText)
-                    .textFieldStyle(.roundedBorder)
-                TextField("报告步长秒 (REPORT STEP)", text: $reportStepText)
-                    .textFieldStyle(.roundedBorder)
-            }
-            .padding(.horizontal, 12)
-
-            HStack {
-                Button("刷新参数") { loadValues() }
-                    .buttonStyle(.bordered)
-                Button("保存参数") { saveValues() }
-                    .buttonStyle(.borderedProminent)
-            }
-            .padding(.horizontal, 12)
-
-            if let message {
-                Text(message)
-                    .font(.caption)
-                    .foregroundColor(isError ? .red : .green)
-                    .padding(.horizontal, 12)
-            }
-        }
-        .padding(.vertical, 6)
-        .onAppear { loadValues() }
-    }
-
-    private func loadValues() {
-        do {
-            let trials = Int(try project.getOption(param: .trials))
-            let accuracy = try project.getOption(param: .accuracy)
-            let demandMult = try project.getOption(param: .demandMult)
-            let duration = try project.getTimeParam(param: .duration)
-            let hydStep = try project.getTimeParam(param: .hydStep)
-            let reportStep = try project.getTimeParam(param: .reportStep)
-
-            trialsText = "\(trials)"
-            accuracyText = String(format: "%.8f", accuracy)
-            demandMultText = String(format: "%.6f", demandMult)
-            durationText = "\(duration)"
-            hydStepText = "\(hydStep)"
-            reportStepText = "\(reportStep)"
-            flowUnitsChoice = (appState.inpFlowUnits?.uppercased() == "LPS") ? "LPS" : "GPM"
-            message = nil
-            isError = false
-        } catch {
-            message = "读取计算参数失败: \(error)"
-            isError = true
-        }
-    }
-
-    private func switchFlowUnits() {
-        appState.switchFlowUnitsReload(targetFlowUnits: flowUnitsChoice)
-        if let err = appState.errorMessage, err.contains("切换 Flow Units 失败") {
-            message = err
-            isError = true
-        } else {
-            loadValues()
-            message = "Flow Units 已切换为 \(flowUnitsChoice)（重载完成）。"
-            isError = false
-        }
-    }
-
-    private func saveValues() {
-        guard let trials = Int(trialsText),
-              let accuracy = Double(accuracyText),
-              let demandMult = Double(demandMultText),
-              let duration = Int(durationText),
-              let hydStep = Int(hydStepText),
-              let reportStep = Int(reportStepText) else {
-            message = "保存失败: 请填写合法数字。"
-            isError = true
-            return
-        }
-
-        appState.updateSimulationSettings(
-            trials: trials,
-            accuracy: accuracy,
-            demandMultiplier: demandMult,
-            duration: duration,
-            hydraulicStep: hydStep,
-            reportStep: reportStep
-        )
-
-        if let err = appState.errorMessage, err.contains("更新计算参数失败") {
-            message = err
-            isError = true
-        } else {
-            loadValues()
-            message = "计算参数已保存。"
-            isError = false
-        }
     }
 }
 
@@ -487,7 +455,8 @@ private struct DeleteToolsSection: View {
     }
 }
 
-private struct NodeEditorSection: View {
+private struct NodeBasicInfoSection: View {
+    @Environment(\.colorScheme) var colorScheme
     @ObservedObject var appState: AppState
     let project: EpanetProject
     let nodeIndex: Int
@@ -497,61 +466,59 @@ private struct NodeEditorSection: View {
     @State private var baseDemandText = ""
     @State private var xCoordText = ""
     @State private var yCoordText = ""
+    /// 上次从引擎加载或防抖提交成功后的文本，用于判断用户是否只改了部分字段。
+    @State private var committedElevationText = ""
+    @State private var committedBaseDemandText = ""
+    @State private var committedXCoordText = ""
+    @State private var committedYCoordText = ""
     @State private var formMessage: String?
     @State private var formMessageIsError = false
+    @State private var nodeCommitTask: Task<Void, Never>?
 
     private var nodeID: String {
         (try? project.getNodeId(index: nodeIndex)) ?? ""
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("编辑节点")
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 12)
-            Text("ID: \(nodeID)")
-                .font(.caption.monospaced())
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 12)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("基本信息")
+                .font(DesignFonts.fieldLabel)
+                .foregroundColor(colorScheme == .dark ? DesignColors.darkText3 : DesignColors.lightText3)
+                .textCase(.uppercase)
+                .padding(.horizontal, DesignSizes.inspectorPaddingH)
 
-            VStack(alignment: .leading, spacing: 6) {
-                TextField(units.elevation, text: $elevationText)
-                    .textFieldStyle(.roundedBorder)
-                TextField("基础需水量 (\(units.flowUnitDisplay))", text: $baseDemandText)
-                    .textFieldStyle(.roundedBorder)
-                TextField("X 坐标", text: $xCoordText)
-                    .textFieldStyle(.roundedBorder)
-                TextField("Y 坐标", text: $yCoordText)
-                    .textFieldStyle(.roundedBorder)
-            }
-            .padding(.horizontal, 12)
+            PropertyFieldRow(label: "ID", value: nodeID)
+            PropertyFieldRow(label: units.elevation, value: $elevationText)
+            PropertyFieldRow(label: "X 坐标", value: $xCoordText)
+            PropertyFieldRow(label: "Y 坐标", value: $yCoordText)
+            PropertyFieldRow(label: "基本需水量 (\(units.flowUnitDisplay))", value: $baseDemandText)
 
-            Text("坐标支持负值与小数，不做正值约束。")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 12)
-
-            HStack {
+            HStack(spacing: 8) {
                 Button("刷新") { loadValues() }
                     .buttonStyle(.bordered)
-                Button("保存节点属性") { saveValues() }
-                    .buttonStyle(.borderedProminent)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, DesignSizes.inspectorPaddingH)
+            .padding(.top, 4)
 
             if let formMessage {
                 Text(formMessage)
                     .font(.caption)
                     .foregroundColor(formMessageIsError ? .red : .green)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, DesignSizes.inspectorPaddingH)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.bottom, DesignSizes.fieldGroupMarginBottom)
         .onAppear { loadValues() }
         .onChange(of: nodeIndex) { _ in loadValues() }
+        .onChange(of: elevationText) { _ in scheduleNodeFieldCommit() }
+        .onChange(of: baseDemandText) { _ in scheduleNodeFieldCommit() }
+        .onChange(of: xCoordText) { _ in scheduleNodeFieldCommit() }
+        .onChange(of: yCoordText) { _ in scheduleNodeFieldCommit() }
     }
 
     private func loadValues() {
+        nodeCommitTask?.cancel()
+        nodeCommitTask = nil
         do {
             let elevation = try project.getNodeValue(nodeIndex: nodeIndex, param: .elevation)
             let baseDemand = try project.getNodeValue(nodeIndex: nodeIndex, param: .basedemand)
@@ -561,6 +528,10 @@ private struct NodeEditorSection: View {
             baseDemandText = String(format: "%.4f", baseDemand)
             xCoordText = String(format: "%.4f", x)
             yCoordText = String(format: "%.4f", y)
+            committedElevationText = elevationText
+            committedBaseDemandText = baseDemandText
+            committedXCoordText = xCoordText
+            committedYCoordText = yCoordText
             formMessage = nil
             formMessageIsError = false
         } catch {
@@ -569,39 +540,57 @@ private struct NodeEditorSection: View {
         }
     }
 
-    private func saveValues() {
-        guard let elevation = Double(elevationText),
-              let baseDemand = Double(baseDemandText),
-              let xCoord = Double(xCoordText),
-              let yCoord = Double(yCoordText) else {
-            formMessage = "请输入有效数字后再保存。"
-            formMessageIsError = true
+    private func scheduleNodeFieldCommit() {
+        nodeCommitTask?.cancel()
+        let capturedIndex = nodeIndex
+        nodeCommitTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: PropertyInspectorAutosave.fieldCommitDebounceNs)
+            guard !Task.isCancelled else { return }
+            commitNodeFieldsIfNeeded(expectedNodeIndex: capturedIndex)
+        }
+    }
+
+    private func commitNodeFieldsIfNeeded(expectedNodeIndex: Int) {
+        guard expectedNodeIndex == nodeIndex else { return }
+        guard !nodeID.isEmpty else { return }
+        let t = { (s: String) -> String in s.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard let elevation = Double(t(elevationText)),
+              let baseDemand = Double(t(baseDemandText)),
+              let xCoord = Double(t(xCoordText)),
+              let yCoord = Double(t(yCoordText)) else {
             return
         }
-        guard !nodeID.isEmpty else {
-            formMessage = "节点 ID 为空，无法保存。"
-            formMessageIsError = true
-            return
-        }
+        var changed: Set<InpNodePatchField> = []
+        if elevationText != committedElevationText { changed.insert(.elevation) }
+        if baseDemandText != committedBaseDemandText { changed.insert(.baseDemand) }
+        if xCoordText != committedXCoordText { changed.insert(.xCoord) }
+        if yCoordText != committedYCoordText { changed.insert(.yCoord) }
+        guard !changed.isEmpty else { return }
+
         appState.updateNodeCoreProperties(
             nodeID: nodeID,
             elevation: elevation,
             baseDemand: baseDemand,
             xCoord: xCoord,
-            yCoord: yCoord
+            yCoord: yCoord,
+            changedFields: changed
         )
         if let err = appState.errorMessage, err.contains("更新节点属性失败") {
             formMessage = err
             formMessageIsError = true
-        } else {
-            loadValues() // 自动回填最新值
-            formMessage = "节点属性已保存。"
-            formMessageIsError = false
+            return
         }
+        formMessage = nil
+        formMessageIsError = false
+        committedElevationText = elevationText
+        committedBaseDemandText = baseDemandText
+        committedXCoordText = xCoordText
+        committedYCoordText = yCoordText
     }
 }
 
-private struct LinkEditorSection: View {
+private struct LinkBasicInfoSection: View {
+    @Environment(\.colorScheme) var colorScheme
     @ObservedObject var appState: AppState
     let project: EpanetProject
     let linkIndex: Int
@@ -610,54 +599,60 @@ private struct LinkEditorSection: View {
     @State private var lengthText = ""
     @State private var diameterText = ""
     @State private var roughnessText = ""
+    @State private var committedLengthText = ""
+    @State private var committedDiameterText = ""
+    @State private var committedRoughnessText = ""
     @State private var formMessage: String?
     @State private var formMessageIsError = false
+    @State private var linkCommitTask: Task<Void, Never>?
 
     private var linkID: String {
         (try? project.getLinkId(index: linkIndex)) ?? ""
     }
+    private var nodesText: String {
+        guard let (n1, n2) = try? project.getLinkNodes(linkIndex: linkIndex) else { return "—" }
+        return "\(n1 + 1) → \(n2 + 1)"
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("编辑管段")
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 12)
-            Text("ID: \(linkID)")
-                .font(.caption.monospaced())
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 12)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("基本信息")
+                .font(DesignFonts.fieldLabel)
+                .foregroundColor(colorScheme == .dark ? DesignColors.darkText3 : DesignColors.lightText3)
+                .textCase(.uppercase)
+                .padding(.horizontal, DesignSizes.inspectorPaddingH)
 
-            VStack(alignment: .leading, spacing: 6) {
-                TextField(units.length, text: $lengthText)
-                    .textFieldStyle(.roundedBorder)
-                TextField(units.diameter, text: $diameterText)
-                    .textFieldStyle(.roundedBorder)
-                TextField("糙率", text: $roughnessText)
-                    .textFieldStyle(.roundedBorder)
-            }
-            .padding(.horizontal, 12)
+            PropertyFieldRow(label: "ID", value: linkID)
+            PropertyFieldRow(label: "节点", value: nodesText)
+            PropertyFieldRow(label: units.length, value: $lengthText)
+            PropertyFieldRow(label: units.diameter, value: $diameterText)
+            PropertyFieldRow(label: "糙率", value: $roughnessText)
 
-            HStack {
+            HStack(spacing: 8) {
                 Button("刷新") { loadValues() }
                     .buttonStyle(.bordered)
-                Button("保存管段属性") { saveValues() }
-                    .buttonStyle(.borderedProminent)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, DesignSizes.inspectorPaddingH)
+            .padding(.top, 4)
 
             if let formMessage {
                 Text(formMessage)
                     .font(.caption)
                     .foregroundColor(formMessageIsError ? .red : .green)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, DesignSizes.inspectorPaddingH)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.bottom, DesignSizes.fieldGroupMarginBottom)
         .onAppear { loadValues() }
         .onChange(of: linkIndex) { _ in loadValues() }
+        .onChange(of: lengthText) { _ in scheduleLinkFieldCommit() }
+        .onChange(of: diameterText) { _ in scheduleLinkFieldCommit() }
+        .onChange(of: roughnessText) { _ in scheduleLinkFieldCommit() }
     }
 
     private func loadValues() {
+        linkCommitTask?.cancel()
+        linkCommitTask = nil
         do {
             let length = try project.getLinkValue(linkIndex: linkIndex, param: .length)
             let diameter = try project.getLinkValue(linkIndex: linkIndex, param: .diameter)
@@ -665,6 +660,9 @@ private struct LinkEditorSection: View {
             lengthText = String(format: "%.4f", length)
             diameterText = String(format: "%.4f", diameter)
             roughnessText = String(format: "%.4f", roughness)
+            committedLengthText = lengthText
+            committedDiameterText = diameterText
+            committedRoughnessText = roughnessText
             formMessage = nil
             formMessageIsError = false
         } catch {
@@ -673,55 +671,142 @@ private struct LinkEditorSection: View {
         }
     }
 
-    private func saveValues() {
-        guard let length = Double(lengthText),
-              let diameter = Double(diameterText),
-              let roughness = Double(roughnessText) else {
-            formMessage = "请输入有效数字后再保存。"
-            formMessageIsError = true
+    private func scheduleLinkFieldCommit() {
+        linkCommitTask?.cancel()
+        let capturedIndex = linkIndex
+        linkCommitTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: PropertyInspectorAutosave.fieldCommitDebounceNs)
+            guard !Task.isCancelled else { return }
+            commitLinkFieldsIfNeeded(expectedLinkIndex: capturedIndex)
+        }
+    }
+
+    private func commitLinkFieldsIfNeeded(expectedLinkIndex: Int) {
+        guard expectedLinkIndex == linkIndex else { return }
+        guard !linkID.isEmpty else { return }
+        let t = { (s: String) -> String in s.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard let length = Double(t(lengthText)),
+              let diameter = Double(t(diameterText)),
+              let roughness = Double(t(roughnessText)) else {
             return
         }
-        guard !linkID.isEmpty else {
-            formMessage = "管段 ID 为空，无法保存。"
-            formMessageIsError = true
-            return
-        }
-        appState.updateLinkCoreProperties(linkID: linkID, length: length, diameter: diameter, roughness: roughness)
+        var changed: Set<InpLinkPatchField> = []
+        if lengthText != committedLengthText { changed.insert(.length) }
+        if diameterText != committedDiameterText { changed.insert(.diameter) }
+        if roughnessText != committedRoughnessText { changed.insert(.roughness) }
+        guard !changed.isEmpty else { return }
+
+        appState.updateLinkCoreProperties(
+            linkID: linkID,
+            length: length,
+            diameter: diameter,
+            roughness: roughness,
+            changedFields: changed
+        )
         if let err = appState.errorMessage, err.contains("更新管段属性失败") {
             formMessage = err
             formMessageIsError = true
-        } else {
-            loadValues() // 自动回填最新值
-            formMessage = "管段属性已保存。"
-            formMessageIsError = false
+            return
         }
+        formMessage = nil
+        formMessageIsError = false
+        committedLengthText = lengthText
+        committedDiameterText = diameterText
+        committedRoughnessText = roughnessText
     }
 }
 
-private struct PropertyTableView: View {
-    let rows: [(String, String)]
+private struct PropertyFieldRow: View {
+    @Environment(\.colorScheme) var colorScheme
+    let label: String
+    @Binding var value: String
+    let readOnly: Bool
+
+    init(label: String, value: String) {
+        self.label = label
+        self._value = .constant(value)
+        self.readOnly = true
+    }
+    init(label: String, value: Binding<String>) {
+        self.label = label
+        self._value = value
+        self.readOnly = false
+    }
+
+    private var surface2: Color { colorScheme == .dark ? DesignColors.darkSurface2 : DesignColors.lightSurface2 }
+    private var border: Color { colorScheme == .dark ? DesignColors.darkBorder : DesignColors.lightBorder }
+    private var text2: Color { colorScheme == .dark ? DesignColors.darkText2 : DesignColors.lightText2 }
+    private var text: Color { colorScheme == .dark ? DesignColors.darkText : DesignColors.lightText }
+    private var accent: Color { colorScheme == .dark ? DesignColors.darkAccent : DesignColors.lightAccent }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { idx, pair in
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(pair.0)
-                        .foregroundColor(.secondary)
-                        .frame(width: 72, alignment: .leading)
-                    Text(pair.1)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .font(.system(.body, design: .monospaced))
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+        HStack(alignment: .center, spacing: 8) {
+            Text(label)
+                .font(DesignFonts.fieldName)
+                .foregroundColor(text2)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                if idx < rows.count - 1 {
-                    Divider()
-                        .padding(.leading, 12)
+            if readOnly {
+                Text(value)
+                    .font(DesignFonts.fieldValue)
+                    .foregroundColor(text)
+                    .frame(minWidth: DesignSizes.fieldValMinWidth, alignment: .trailing)
+                    .padding(.horizontal, DesignSizes.fieldValPaddingH)
+                    .padding(.vertical, DesignSizes.fieldValPaddingV)
+                    .background(surface2, in: RoundedRectangle(cornerRadius: DesignSizes.fieldValCornerRadius))
+                    .overlay(RoundedRectangle(cornerRadius: DesignSizes.fieldValCornerRadius).stroke(border, lineWidth: 1))
+            } else {
+                TextField("", text: $value)
+                    .font(DesignFonts.fieldValue)
+                    .foregroundColor(accent)
+                    .multilineTextAlignment(.trailing)
+                    .frame(minWidth: DesignSizes.fieldValMinWidth)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, DesignSizes.fieldValPaddingH)
+                    .padding(.vertical, DesignSizes.fieldValPaddingV)
+                    .background(accent.opacity(colorScheme == .dark ? 0.15 : 0.05), in: RoundedRectangle(cornerRadius: DesignSizes.fieldValCornerRadius))
+                    .overlay(RoundedRectangle(cornerRadius: DesignSizes.fieldValCornerRadius).stroke(accent, lineWidth: 1))
+            }
+        }
+        .padding(.horizontal, DesignSizes.inspectorPaddingH)
+    }
+}
+
+private struct PropertyFieldGroup: View {
+    @Environment(\.colorScheme) var colorScheme
+    let label: String
+    let rows: [(String, String)]
+
+    private var surface2: Color { colorScheme == .dark ? DesignColors.darkSurface2 : DesignColors.lightSurface2 }
+    private var border: Color { colorScheme == .dark ? DesignColors.darkBorder : DesignColors.lightBorder }
+    private var text2: Color { colorScheme == .dark ? DesignColors.darkText2 : DesignColors.lightText2 }
+    private var text3: Color { colorScheme == .dark ? DesignColors.darkText3 : DesignColors.lightText3 }
+    private var text: Color { colorScheme == .dark ? DesignColors.darkText : DesignColors.lightText }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignSizes.fieldRowMarginBottom) {
+            Text(label)
+                .font(DesignFonts.fieldLabel)
+                .foregroundColor(text3)
+                .textCase(.uppercase)
+                .padding(.bottom, 6)
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, pair in
+                HStack(alignment: .center, spacing: 8) {
+                    Text(pair.0)
+                        .font(DesignFonts.fieldName)
+                        .foregroundColor(text2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(pair.1)
+                        .font(DesignFonts.fieldValue)
+                        .foregroundColor(text)
+                        .frame(minWidth: DesignSizes.fieldValMinWidth, alignment: .trailing)
+                        .padding(.horizontal, DesignSizes.fieldValPaddingH)
+                        .padding(.vertical, DesignSizes.fieldValPaddingV)
+                        .background(surface2, in: RoundedRectangle(cornerRadius: DesignSizes.fieldValCornerRadius))
+                        .overlay(RoundedRectangle(cornerRadius: DesignSizes.fieldValCornerRadius).stroke(border, lineWidth: 1))
                 }
             }
         }
-        .padding(.top, 4)
+        .padding(.horizontal, DesignSizes.inspectorPaddingH)
+        .padding(.bottom, DesignSizes.fieldGroupMarginBottom)
     }
 }

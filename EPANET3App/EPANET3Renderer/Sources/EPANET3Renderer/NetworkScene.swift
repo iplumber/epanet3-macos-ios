@@ -47,6 +47,18 @@ public struct NetworkScene {
         }
         if nodes.isEmpty {
             minX = 0; minY = 0; maxX = 100; maxY = 100
+        } else {
+            let minExtent: Float = 80
+            if maxX - minX < minExtent {
+                let c = (minX + maxX) * 0.5
+                minX = c - minExtent * 0.5
+                maxX = c + minExtent * 0.5
+            }
+            if maxY - minY < minExtent {
+                let c = (minY + maxY) * 0.5
+                minY = c - minExtent * 0.5
+                maxY = c + minExtent * 0.5
+            }
         }
         self.bounds = (minX, minY, maxX, maxY)
     }
