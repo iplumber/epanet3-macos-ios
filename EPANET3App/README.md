@@ -7,6 +7,8 @@
 阶段交接与当前状态见 [PHASE_HANDOFF.md](PHASE_HANDOFF.md) 与 [STATUS.md](STATUS.md)。
 发布口径与验收归档见 [../docs/发布说明_v1.md](../docs/发布说明_v1.md) 与 [../docs/最终验收记录_v1.md](../docs/最终验收记录_v1.md)。
 
+视窗不写 `.inp`、打开默认全貌及后续自有工程格式规划见 [../docs/开发任务清单_v1.md](../docs/开发任务清单_v1.md) **§6.5**。
+
 本包将 EPANET 3.0 水力计算引擎集成到 Swift，支持 macOS 和 iOS。
 
 ### 结构

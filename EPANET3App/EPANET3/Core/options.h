@@ -175,13 +175,17 @@ class Options
 
     // ... Methods that write a collection of options to a string
 
-    std::string hydOptionsToStr();
-    std::string qualOptionsToStr();
-    std::string demandOptionsToStr();
+    /// Writes [OPTIONS] using EPANET 2.x field names (Units, Headloss, Trials, …) for interoperability with EPANET 2.2.
+    std::string epanet2OptionsToStr(Network* network);
+    /// Writes [TIMES] using EPANET 2.x keywords (Duration, Hydraulic Timestep, …) for EPANET 2.2.
+    std::string epanet2TimeOptionsToStr();
     std::string timeOptionsToStr();
     std::string reactOptionsToStr();
     std::string energyOptionsToStr(Network* network);
     std::string reportOptionsToStr();
+
+    /// EPANET INP 写出时数值小数位数（与读入 .inp 分析结果一致；默认 4）
+    int outputFracDigits = 4;
 
   private:
 

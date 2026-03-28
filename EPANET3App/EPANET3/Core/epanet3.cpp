@@ -32,6 +32,7 @@
 #include <time.h>
 #include <string>
 #include <cstring>
+#include <strings.h>
 
 using namespace Epanet;
 
@@ -509,6 +510,47 @@ int EN_setNodeValue(int index, int param, double value, EN_Project p)
             return 0;
         }
         return 203;
+    case EN_TANKDIAM:
+        if (node->type() == Node::TANK)
+        {
+            Tank* t = static_cast<Tank*>(node);
+            if (value <= 0.0) return 206;
+            t->diameter = value / lcf;
+            return 0;
+        }
+        return 203;
+    case EN_MINLEVEL:
+        if (node->type() == Node::TANK)
+        {
+            Tank* t = static_cast<Tank*>(node);
+            t->minHead = t->elev + value / lcf;
+            return 0;
+        }
+        return 203;
+    case EN_MAXLEVEL:
+        if (node->type() == Node::TANK)
+        {
+            Tank* t = static_cast<Tank*>(node);
+            t->maxHead = t->elev + value / lcf;
+            return 0;
+        }
+        return 203;
+    case EN_MINVOLUME:
+        if (node->type() == Node::TANK)
+        {
+            Tank* t = static_cast<Tank*>(node);
+            if (value < 0.0) return 206;
+            t->minVolume = value / nw->ucf(Units::VOLUME);
+            return 0;
+        }
+        return 203;
+    case EN_HEAD:
+        if (node->type() == Node::RESERVOIR)
+        {
+            node->elev = value / lcf;
+            return 0;
+        }
+        return 203;
     default:
         return 203;
     }
@@ -527,8 +569,14 @@ int EN_setLinkValue(int index, int param, double value, EN_Project p)
     switch (param)
     {
     case EN_DIAMETER:
-        link->diameter = value / dcf;
-        return 0;
+        if (value < 0.0) return 206;
+        if (link->type() == Link::PIPE || link->type() == Link::PUMP ||
+            link->type() == Link::VALVE)
+        {
+            link->diameter = value / dcf;
+            return 0;
+        }
+        return 203;
     case EN_MINORLOSS:
         if (value < 0.0) return 206;
         link->lossCoeff = value;
@@ -547,6 +595,10 @@ int EN_setLinkValue(int index, int param, double value, EN_Project p)
             pipe->length = value / lcf;
             return 0;
         }
+        if (link->type() == Link::PUMP || link->type() == Link::VALVE)
+        {
+            return 0;
+        }
         return 203;
     case EN_ROUGHNESS:
         if (link->type() == Link::PIPE)
@@ -554,6 +606,10 @@ int EN_setLinkValue(int index, int param, double value, EN_Project p)
             Pipe* pipe = static_cast<Pipe*>(link);
             if (value <= 0.0) return 206;
             pipe->roughness = value;
+            return 0;
+        }
+        if (link->type() == Link::PUMP || link->type() == Link::VALVE)
+        {
             return 0;
         }
         return 203;
@@ -658,5 +714,33 @@ int EN_deleteLink(char* id, EN_Project p)
     return project(p)->getNetwork()->deleteElement(Element::LINK, std::string(id));
 }
 
+//-----------------------------------------------------------------------------
 
-}  // end of namespace
+int EN_setNoriaExportVersion(const char* version, EN_Project p)
+{
+    if (!p) return 102;
+    Network* nw = project(p)->getNetwork();
+    nw->noriaExportVersion = (version && version[0]) ? std::string(version) : std::string();
+    return 0;
+}
+
+//-----------------------------------------------------------------------------
+
+int EN_setInpWriterSectionFractionDigits(const char* section, int digits, EN_Project p)
+{
+    if (!p) return 102;
+    Network* nw = project(p)->getNetwork();
+    int d = digits;
+    if (d < 0) d = 0;
+    if (d > 15) d = 15;
+    if (!section || !section[0] || strcasecmp(section, "DEFAULT") == 0)
+    {
+        nw->inpWriterFracDefault = d;
+        nw->options.outputFracDigits = d;
+        return 0;
+    }
+    nw->inpWriterFracBySection[Utilities::upperCase(std::string(section))] = d;
+    return 0;
+}
+
+}  // extern "C"

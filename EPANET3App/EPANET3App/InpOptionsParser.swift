@@ -8,9 +8,47 @@ struct InpOptionsParser {
     /// 合法的 flow unit 关键字，用于识别 “UNITS GPM” 中的值
     private static let flowUnitValues: Set<String> = ["CFS", "GPM", "MGD", "IMGD", "AFD", "LPS", "LPM", "MLD", "CMH", "CMD"]
 
+    /// 与 `EPANET3/Core/options.cpp` 中 `flowUnitsWords[]` 顺序一致（设置界面、切换单位时写入 .inp 的合法值）。
+    static let epanetFlowUnitsOrdered: [(code: String, menuLabel: String)] = [
+        ("CFS", "CFS · 立方英尺/秒"),
+        ("GPM", "GPM · 美制加仑/分钟"),
+        ("MGD", "MGD · 百万美制加仑/日"),
+        ("IMGD", "IMGD · 百万英制加仑/日"),
+        ("AFD", "AFD · 英亩·英尺/日"),
+        ("LPS", "LPS · 升/秒"),
+        ("LPM", "LPM · 升/分钟"),
+        ("MLD", "MLD · 百万升/日"),
+        ("CMH", "CMH · 立方米/小时"),
+        ("CMD", "CMD · 立方米/日"),
+    ]
+
+    /// 是否为 EPANET 支持的 Flow Units 关键字。
+    static func isValidFlowUnitCode(_ code: String) -> Bool {
+        let u = code.uppercased().trimmingCharacters(in: .whitespaces)
+        return flowUnitValues.contains(u)
+    }
+
+    /// 流量类数值在界面上的简短单位后缀（画布标注等若需显示单位时可复用；属性面板当前不显示单位）。
+    static func flowUnitDisplaySuffix(code: String?) -> String {
+        let u = (code ?? "GPM").uppercased().trimmingCharacters(in: .whitespaces)
+        switch u {
+        case "CMH": return "m³/h"
+        case "CMD": return "m³/d"
+        case "LPS": return "L/s"
+        case "LPM": return "L/min"
+        case "MLD": return "ML/d"
+        default: return u.isEmpty ? "GPM" : u
+        }
+    }
+
     /// 解析 path 指向的 .inp 的 [OPTION]/[OPTIONS]，返回 Flow Units 关键字（如 "GPM", "LPS"）；无法解析时返回 nil。
     static func parseFlowUnits(path: String) -> String? {
         guard let content = try? InpFileTextReader.contentsOfFile(path: path) else { return nil }
+        return parseFlowUnits(content: content)
+    }
+
+    /// 从已读入的 .inp 全文解析 Flow Units（与 `parseFlowUnits(path:)` 一致，避免重复磁盘读）。
+    static func parseFlowUnits(content: String) -> String? {
         let lines = content.components(separatedBy: .newlines)
         var inOptions = false
         for rawLine in lines {
@@ -81,9 +119,55 @@ struct InpOptionsParser {
         return Self.usFlowUnits.contains(u)
     }
 
+    /// 一次读入 .inp 后在 `[OPTIONS]` 段内解析的常用项（避免设置页对同一文件连读多遍）。
+    struct InpOptionsHints: Equatable {
+        var headloss: String?
+        var viscosity: Double?
+        var diffusivity: Double?
+        var quality: String?
+    }
+
+    /// 整文件只读一次，扫描 `[OPTION(S)]` 中的 HEADLOSS / VISCOSITY / DIFFUSIVITY / QUALITY。
+    static func parseOptionsHints(path: String) -> InpOptionsHints? {
+        guard let content = try? InpFileTextReader.contentsOfFile(path: path) else { return nil }
+        return parseOptionsHints(content: content)
+    }
+
+    static func parseOptionsHints(content: String) -> InpOptionsHints {
+        var hints = InpOptionsHints()
+        let lines = content.components(separatedBy: .newlines)
+        var inOptions = false
+        for rawLine in lines {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix(";") { continue }
+            if line.hasPrefix("[") {
+                let upper = line.uppercased()
+                inOptions = upper.starts(with: "[OPTION")
+                continue
+            }
+            guard inOptions else { continue }
+            let tokens = line.split(whereSeparator: { $0.isWhitespace }).map { String($0) }
+            guard tokens.count >= 2 else { continue }
+            let key = tokens[0].uppercased()
+            switch key {
+            case "HEADLOSS":
+                hints.headloss = tokens[1].uppercased()
+            case "VISCOSITY":
+                hints.viscosity = Double(tokens[1])
+            case "DIFFUSIVITY":
+                hints.diffusivity = Double(tokens[1])
+            case "QUALITY":
+                hints.quality = tokens[1].uppercased()
+            default:
+                break
+            }
+        }
+        return hints
+    }
+
     /// 从 .inp [OPTIONS] 解析水头损失公式；返回 "H-W", "D-W", "C-M" 之一，或 nil。
     static func parseHeadloss(path: String) -> String? {
-        return parseStringOption(path: path, keys: ["HEADLOSS"])
+        parseOptionsHints(path: path)?.headloss
     }
 
     /// 从 .inp [OPTIONS] 解析需水量模型；返回 "DDA", "PDA", "FIXED" 等，或 nil。
@@ -93,17 +177,17 @@ struct InpOptionsParser {
 
     /// 从 .inp [OPTIONS] 解析水质类型；返回 "NONE", "CHEMICAL", "AGE", "TRACE" 等，或 nil。
     static func parseQualityType(path: String) -> String? {
-        return parseStringOption(path: path, keys: ["QUALITY"])
+        parseOptionsHints(path: path)?.quality
     }
 
     /// 从 .inp [OPTIONS] 解析粘度系数，默认 1.0。
     static func parseViscosity(path: String) -> Double? {
-        return parseDoubleOption(path: path, keys: ["VISCOSITY"])
+        parseOptionsHints(path: path)?.viscosity
     }
 
     /// 从 .inp [OPTIONS] 解析扩散系数，默认 1.0。
     static func parseDiffusivity(path: String) -> Double? {
-        return parseDoubleOption(path: path, keys: ["DIFFUSIVITY"])
+        parseOptionsHints(path: path)?.diffusivity
     }
 
     private static func parseStringOption(path: String, keys: [String]) -> String? {

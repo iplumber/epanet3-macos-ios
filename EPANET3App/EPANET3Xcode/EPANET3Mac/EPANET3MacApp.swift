@@ -25,6 +25,11 @@ struct EPANET3MacApp: App {
             ContentView()
                 .environmentObject(appState)
                 .frame(minWidth: 800, minHeight: 600)
+                .onAppear {
+                    appState.macOpenSettingsHandler = { tab in
+                        SettingsWindowController.shared.show(appState: appState, initialTab: tab)
+                    }
+                }
         }
         .windowToolbarStyle(.unifiedCompact)
         .commands {
@@ -57,7 +62,7 @@ struct EPANET3MacApp: App {
 
             // ── 文件菜单 ──
             CommandGroup(replacing: .newItem) {
-                Button("新建") { appState.newProject() }
+                Button("新建文件") { appState.newFile() }
                     .keyboardShortcut("n", modifiers: .command)
             }
             CommandGroup(replacing: .saveItem) {}
@@ -72,6 +77,37 @@ struct EPANET3MacApp: App {
                 Divider()
                 Button("关闭") { appState.closeFile() }
                     .keyboardShortcut("w", modifiers: .command)
+                Divider()
+                Button("运行计算") { appState.runCalculation() }
+                    .keyboardShortcut("r", modifiers: .command)
+                    .disabled(!appState.canRunHydraulicSolver || appState.isRunning)
+            }
+            CommandGroup(after: .pasteboard) {
+                Toggle(isOn: Binding(
+                    get: { appState.isTopologyEditingEnabled },
+                    set: { appState.isTopologyEditingEnabled = $0 }
+                )) {
+                    Text("允许编辑管网拓扑")
+                        .foregroundStyle(appState.isTopologyEditingEnabled ? TopologyEditingAccent.menuOnTint : .primary)
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .tint(TopologyEditingAccent.menuOnTint)
+                Divider()
+                Button("新增节点") { appState.beginCanvasPlacement(.junction) }
+                    .disabled(!appState.isTopologyEditingEnabled)
+                Button("新增水塔") { appState.beginCanvasPlacement(.tankTower) }
+                    .disabled(!appState.isTopologyEditingEnabled)
+                Button("新增水库") { appState.beginCanvasPlacement(.tankPool) }
+                    .disabled(!appState.isTopologyEditingEnabled)
+                Button("新增管段") { appState.beginCanvasPlacement(.pipe) }
+                    .disabled(!appState.isTopologyEditingEnabled)
+                Button("新增阀门") { appState.beginCanvasPlacement(.valve) }
+                    .disabled(!appState.isTopologyEditingEnabled)
+                Button("新增水泵") { appState.beginCanvasPlacement(.pump) }
+                    .disabled(!appState.isTopologyEditingEnabled)
+                Divider()
+                Button("删除选中对象") { appState.deleteSelectedObject() }
+                    .disabled(!appState.isTopologyEditingEnabled)
             }
         }
         // ⚠️ 不使用 Settings { } 场景——它会强制注入带齿轮图标和省略号的「设置…」菜单项，
@@ -83,17 +119,24 @@ struct EPANET3MacApp: App {
 // MARK: - 设置窗口控制器（替代 Settings { } 场景）
 
 #if os(macOS)
+@MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     static let shared = SettingsWindowController()
 
     private var windowController: NSWindowController?
     private weak var currentAppState: AppState?
+    /// 按下 ESC（keyCode 53）关闭设置窗口
+    private var escapeKeyMonitor: Any?
 
-    func show(appState: AppState) {
+    func show(appState: AppState, initialTab: Int? = nil) {
         currentAppState = appState
+        if let tab = initialTab {
+            appState.settingsPendingToolbarTab = tab
+        }
 
         if let wc = windowController, let window = wc.window, window.isVisible {
+            installEscapeMonitor(for: window)
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
@@ -103,23 +146,48 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             .environmentObject(appState)
 
         let hostingController = NSHostingController(rootView: rootView)
-        hostingController.view.setFrameSize(NSSize(width: 720, height: 480))
+        hostingController.view.setFrameSize(NSSize(width: 720, height: 640))
 
         let window = NSWindow(contentViewController: hostingController)
         window.title = "设置"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 720, height: 480))
+        window.setContentSize(NSSize(width: 720, height: 640))
         window.minSize = NSSize(width: 560, height: 380)
         window.center()
+        // 相对居中位置整体下移 100pt（屏幕坐标 y 向上为正）
+        var frame = window.frame
+        frame.origin.y -= 100
+        window.setFrameOrigin(frame.origin)
         window.delegate = self
 
         let wc = NSWindowController(window: window)
         windowController = wc
+        installEscapeMonitor(for: window)
         wc.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func installEscapeMonitor(for window: NSWindow) {
+        removeEscapeMonitor()
+        escapeKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak window] event in
+            guard let window, window.isKeyWindow else { return event }
+            if event.keyCode == 53 {
+                window.close()
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeEscapeMonitor() {
+        if let escapeKeyMonitor {
+            NSEvent.removeMonitor(escapeKeyMonitor)
+            self.escapeKeyMonitor = nil
+        }
+    }
+
     func windowWillClose(_ notification: Notification) {
+        removeEscapeMonitor()
         windowController = nil
     }
 }

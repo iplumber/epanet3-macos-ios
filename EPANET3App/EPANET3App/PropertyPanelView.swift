@@ -11,52 +11,16 @@ private enum PropertyInspectorAutosave {
     static let fieldCommitDebounceNs: UInt64 = 450_000_000
 }
 
-/// 与 Flow Units 联动的属性单位标签：GPM/CFS/MGD/IMGD/AFD → 美制；LPS/LPM/MLD/CMH/CMD → 公制。
-/// 美制/公制由 inp 的 Flow Units 决定；未解析到时与引擎默认一致按 GPM（美制）。
+/// 属性面板字段标签（不附带单位，与画布标注一致）。
 private struct PropertyUnits {
-    let flowUnit: String
-    let flowUnitDisplay: String
-    let isUS: Bool
-    let elevation: String
-    let head: String
-    let pressure: String
-    let velocity: String
-    let length: String
-    let diameter: String
+    let elevation = "高程"
+    let head = "水头"
+    let pressure = "压力"
+    let velocity = "流速"
+    let length = "长度"
+    let diameter = "管径"
 
-    init(flowUnits: String?) {
-        let u = (flowUnits ?? "GPM").uppercased().trimmingCharacters(in: .whitespaces)
-        flowUnit = u.isEmpty ? "GPM" : u
-        isUS = InpOptionsParser.isUSCustomary(flowUnits: flowUnit)
-        flowUnitDisplay = Self.flowUnitDisplayName(flowUnit)
-        if isUS {
-            elevation = "高程 (ft)"
-            head = "水头 (ft)"
-            pressure = "压力 (psi)"
-            velocity = "流速 (ft/s)"
-            length = "长度 (ft)"
-            diameter = "管径 (in)"
-        } else {
-            elevation = "高程 (m)"
-            head = "水头 (m)"
-            pressure = "压力 (m)"
-            velocity = "流速 (m/s)"
-            length = "长度 (m)"
-            diameter = "管径 (mm)"
-        }
-    }
-
-    /// 需水量/管段流量的显示单位：公制 CMH→m³/h，CMD→m³/d 等；美制保持 GPM 等。
-    private static func flowUnitDisplayName(_ unit: String) -> String {
-        switch unit.uppercased() {
-        case "CMH": return "m³/h"
-        case "CMD": return "m³/d"
-        case "LPS": return "L/s"
-        case "LPM": return "L/min"
-        case "MLD": return "ML/d"
-        default: return unit.uppercased()
-        }
-    }
+    init() {}
 }
 
 struct PropertyPanelView: View {
@@ -114,12 +78,17 @@ struct PropertyPanelView: View {
     }
 
     private var units: PropertyUnits {
-        PropertyUnits(flowUnits: appState.inpFlowUnits)
+        PropertyUnits()
+    }
+
+    private var canvasSelectionCount: Int {
+        appState.selectedNodeIndices.count + appState.selectedLinkIndices.count
     }
 
     private var objectTypeLabel: some View {
         let accentColor = colorScheme == .dark ? DesignColors.darkAccent : DesignColors.lightAccent
         let (label, tint): (String, Color) = {
+            if canvasSelectionCount > 1 { return ("多选 \(canvasSelectionCount) 项", accentColor) }
             if selectedNodeIndex != nil { return ("节点 Junction", accentColor) }
             if selectedLinkIndex != nil { return ("管段 Pipe", Color.orange) }
             return ("未选中", text2)
@@ -136,6 +105,7 @@ struct PropertyPanelView: View {
     private var objectIDText: some View {
         let id: String = {
             guard let proj = appState.project else { return "—" }
+            if canvasSelectionCount > 1 { return "—" }
             if let i = selectedNodeIndex { return (try? proj.getNodeId(index: i)) ?? "—" }
             if let i = selectedLinkIndex { return (try? proj.getLinkId(index: i)) ?? "—" }
             return "—"
@@ -169,7 +139,12 @@ struct PropertyPanelView: View {
                 DeleteToolsSection(appState: appState)
                 Divider().padding(.vertical, 6)
             }
-            if let i = selectedNodeIndex, i >= 0 {
+            if canvasSelectionCount > 1 {
+                Text("已选中 \(canvasSelectionCount) 个对象，可在画布上批量删除。")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            } else if let i = selectedNodeIndex, i >= 0 {
                 NodeBasicInfoSection(appState: appState, project: proj, nodeIndex: i, units: units)
             } else if let i = selectedLinkIndex, i >= 0 {
                 LinkBasicInfoSection(appState: appState, project: proj, linkIndex: i, units: units)
@@ -182,32 +157,29 @@ struct PropertyPanelView: View {
 
             Divider().padding(.vertical, 6)
 
-            if case .success(let elapsed) = appState.runResult {
-                HStack(spacing: 8) {
-                    Circle().fill(Color.green).frame(width: 8, height: 8)
-                    Text("最近计算成功 · \(String(format: "%.2f", elapsed)) 秒")
-                        .font(.caption)
-                        .foregroundColor(.green)
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 4)
-            } else if case .failure(let message) = appState.runResult {
+            if case .failure(let message) = appState.runResult {
                 Text("最近计算失败：\(message)")
                     .font(.caption)
                     .foregroundColor(.red)
                     .padding(.horizontal, 12)
                     .padding(.top, 4)
-            } else {
+            } else if appState.runResult == nil {
                 Text("尚未运行计算")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 12)
                     .padding(.top, 4)
             }
-            if let i = selectedNodeIndex, i >= 0 {
-                PropertyFieldGroup(label: "计算结果", rows: nodeResultRows(project: proj, nodeIndex: i))
+            if canvasSelectionCount > 1 {
+                Text("多选时仅显示列表，结果项请单选单个对象。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            } else if let i = selectedNodeIndex, i >= 0 {
+                ChartResultRowsSection(appState: appState, rows: nodeResultRows(project: proj, nodeIndex: i))
             } else if let i = selectedLinkIndex, i >= 0 {
-                PropertyFieldGroup(label: "计算结果", rows: linkResultRows(project: proj, linkIndex: i))
+                ChartResultRowsSection(appState: appState, rows: linkResultRows(project: proj, linkIndex: i))
             } else {
                 Text("选择对象后显示结果项")
                     .font(.caption)
@@ -216,7 +188,7 @@ struct PropertyPanelView: View {
                     .padding(12)
             }
         } else {
-            Text("仅显示模式，无属性数据")
+            Text("无管网数据（空白画布或仅显示模式）")
                 .foregroundColor(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
@@ -244,26 +216,143 @@ struct PropertyPanelView: View {
         }
     }
 
-    private func nodeResultRows(project: EpanetProject, nodeIndex: Int) -> [(String, String)] {
-        var rows: [(String, String)] = []
+    /// 标签、显示值、与底部时序图一致的参数字段名（`NodeChartParam.rawValue`）。
+    /// 有逐水力步时序时数值与工具栏时间轴游标联动；否则为引擎当前快照。
+    private func nodeResultRows(project: EpanetProject, nodeIndex: Int) -> [(String, String, String)] {
+        var rows: [(String, String, String)] = []
         let u = units
         do {
-            rows.append((u.head, String(format: "%.2f", try project.getNodeValue(nodeIndex: nodeIndex, param: .head))))
-            rows.append((u.pressure, String(format: "%.2f", try project.getNodeValue(nodeIndex: nodeIndex, param: .pressure))))
-            rows.append(("需水量 (\(u.flowUnitDisplay))", String(format: "%.4f", try project.getNodeValue(nodeIndex: nodeIndex, param: .actualdemand))))
+            let head: Double
+            if let v = appState.resultScalarForPropertyPanel(nodeIndex: nodeIndex, param: .head) { head = v }
+            else { head = try project.getNodeValue(nodeIndex: nodeIndex, param: .head) }
+            let pressure: Double
+            if let v = appState.resultScalarForPropertyPanel(nodeIndex: nodeIndex, param: .pressure) { pressure = v }
+            else { pressure = try project.getNodeValue(nodeIndex: nodeIndex, param: .pressure) }
+            let demand: Double
+            if let v = appState.resultScalarForPropertyPanel(nodeIndex: nodeIndex, param: .demand) { demand = v }
+            else { demand = try project.getNodeValue(nodeIndex: nodeIndex, param: .actualdemand) }
+            rows.append((u.head, String(format: "%.2f", head), NodeChartParam.head.rawValue))
+            rows.append((u.pressure, String(format: "%.2f", pressure), NodeChartParam.pressure.rawValue))
+            rows.append(("需水量", String(format: "%.4f", demand), NodeChartParam.demand.rawValue))
         } catch {}
         return rows
     }
 
-    private func linkResultRows(project: EpanetProject, linkIndex: Int) -> [(String, String)] {
-        var rows: [(String, String)] = []
+    /// 标签、显示值、与底部时序图一致的参数字段名（`LinkChartParam.rawValue`）。
+    /// 有逐水力步时序时数值与工具栏时间轴游标联动；否则为引擎当前快照。
+    private func linkResultRows(project: EpanetProject, linkIndex: Int) -> [(String, String, String)] {
         let u = units
+        let linkType = (try? project.getLinkType(index: linkIndex)) ?? .pipe
+        var rows: [(String, String, String)] = []
         do {
-            rows.append(("流量 (\(u.flowUnitDisplay))", String(format: "%.4f", try project.getLinkValue(linkIndex: linkIndex, param: .flow))))
-            rows.append((u.velocity, String(format: "%.4f", try project.getLinkValue(linkIndex: linkIndex, param: .velocity))))
-            rows.append(("水头损失", String(format: "%.4f", try project.getLinkValue(linkIndex: linkIndex, param: .headloss))))
+            switch linkType {
+            case .pump, .prv, .psv, .pbv, .fcv, .tcv, .gpv:
+                let flow: Double
+                if let v = appState.resultScalarForPropertyPanel(linkIndex: linkIndex, param: .flow) { flow = v }
+                else { flow = try project.getLinkValue(linkIndex: linkIndex, param: .flow) }
+                let status: Double
+                if let v = appState.resultScalarForPropertyPanel(linkIndex: linkIndex, param: .status) { status = v }
+                else { status = try project.getLinkValue(linkIndex: linkIndex, param: .status) }
+                rows.append((LinkChartParam.flow.rawValue, NumericDisplayFormat.formatLinkFlowOrVelocity(flow), LinkChartParam.flow.rawValue))
+                rows.append((LinkChartParam.status.rawValue, String(format: "%.4f", status), LinkChartParam.status.rawValue))
+            case .pipe, .cvpipe:
+                let flow: Double
+                if let v = appState.resultScalarForPropertyPanel(linkIndex: linkIndex, param: .flow) { flow = v }
+                else { flow = try project.getLinkValue(linkIndex: linkIndex, param: .flow) }
+                let velocity: Double
+                if let v = appState.resultScalarForPropertyPanel(linkIndex: linkIndex, param: .velocity) { velocity = v }
+                else { velocity = try project.getLinkValue(linkIndex: linkIndex, param: .velocity) }
+                let headloss: Double
+                if let v = appState.resultScalarForPropertyPanel(linkIndex: linkIndex, param: .headloss) { headloss = v }
+                else { headloss = try project.getLinkValue(linkIndex: linkIndex, param: .headloss) }
+                rows.append((LinkChartParam.flow.rawValue, NumericDisplayFormat.formatLinkFlowOrVelocity(flow), LinkChartParam.flow.rawValue))
+                rows.append((u.velocity, NumericDisplayFormat.formatLinkFlowOrVelocity(velocity), LinkChartParam.velocity.rawValue))
+                rows.append((LinkChartParam.headloss.rawValue, String(format: "%.4f", headloss), LinkChartParam.headloss.rawValue))
+            }
         } catch {}
         return rows
+    }
+}
+
+// MARK: - 计算结果行（可点击加入底部时序图 + Y1/Y2）
+
+private struct ChartResultRowsSection: View {
+    @ObservedObject var appState: AppState
+    /// (标签, 数值文本, 参数字段名)
+    let rows: [(String, String, String)]
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var chartable: Set<String> {
+        appState.chartableResultParamKeysForCurrentSelection()
+    }
+
+    private var surface2: Color { colorScheme == .dark ? DesignColors.darkSurface2 : DesignColors.lightSurface2 }
+    private var border: Color { colorScheme == .dark ? DesignColors.darkBorder : DesignColors.lightBorder }
+    private var text2: Color { colorScheme == .dark ? DesignColors.darkText2 : DesignColors.lightText2 }
+    private var text3: Color { colorScheme == .dark ? DesignColors.darkText3 : DesignColors.lightText3 }
+    private var text: Color { colorScheme == .dark ? DesignColors.darkText : DesignColors.lightText }
+    private var accent: Color { colorScheme == .dark ? DesignColors.darkAccent : DesignColors.lightAccent }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignSizes.fieldRowMarginBottom) {
+            Text("计算结果")
+                .font(DesignFonts.fieldLabel)
+                .foregroundColor(text3)
+                .textCase(.uppercase)
+                .padding(.bottom, 6)
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                let paramKey = row.2
+                let onChart = appState.chartPanelCurves.contains(where: { $0.paramKey == paramKey })
+                let canChart = chartable.contains(paramKey)
+                HStack(alignment: .center, spacing: 6) {
+                    Button {
+                        if canChart { appState.toggleChartPanelParam(paramKey) }
+                    } label: {
+                        Text(row.0)
+                            .font(DesignFonts.fieldName)
+                            .foregroundColor(canChart ? (onChart ? accent : text2) : text3)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canChart)
+
+                    Group {
+                        if onChart {
+                            Picker("", selection: axisBinding(paramKey: paramKey)) {
+                                Text("Y1").tag(ChartAxisSlot.y1)
+                                Text("Y2").tag(ChartAxisSlot.y2)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 104)
+                        } else {
+                            Color.clear.frame(width: 104, height: 28)
+                        }
+                    }
+
+                    Text(row.1)
+                        .font(DesignFonts.fieldValue)
+                        .foregroundColor(text)
+                        .frame(minWidth: 52, alignment: .trailing)
+                        .padding(.horizontal, DesignSizes.fieldValPaddingH)
+                        .padding(.vertical, DesignSizes.fieldValPaddingV)
+                        .background(surface2, in: RoundedRectangle(cornerRadius: DesignSizes.fieldValCornerRadius))
+                        .overlay(RoundedRectangle(cornerRadius: DesignSizes.fieldValCornerRadius).stroke(border, lineWidth: 1))
+                }
+                .padding(.horizontal, DesignSizes.inspectorPaddingH)
+            }
+        }
+        .padding(.bottom, DesignSizes.fieldGroupMarginBottom)
+    }
+
+    private func axisBinding(paramKey: String) -> Binding<ChartAxisSlot> {
+        Binding(
+            get: {
+                appState.chartPanelCurves.first(where: { $0.paramKey == paramKey })?.axis ?? .y1
+            },
+            set: { appState.setChartPanelAxis(paramKey: paramKey, axis: $0) }
+        )
     }
 }
 
@@ -299,7 +388,7 @@ private struct AddToolsSection: View {
                     .foregroundColor(.secondary)
                 TextField("节点 ID", text: $nodeID).textFieldStyle(.roundedBorder)
                 TextField(units.elevation, text: $nodeElevation).textFieldStyle(.roundedBorder)
-                TextField("基础需水量 (\(units.flowUnitDisplay))", text: $nodeDemand).textFieldStyle(.roundedBorder)
+                TextField("基础需水量", text: $nodeDemand).textFieldStyle(.roundedBorder)
                 TextField("X 坐标", text: $nodeX).textFieldStyle(.roundedBorder)
                 TextField("Y 坐标", text: $nodeY).textFieldStyle(.roundedBorder)
                 Button("新增节点") { addNode() }
@@ -352,6 +441,11 @@ private struct AddToolsSection: View {
         }
     }
 
+    /// 与 `[OPTIONS] HEADLOSS` 一致；未解析时按 EPANET 默认 H-W。
+    private var useIntegerRoughnessHazenWilliams: Bool {
+        (appState.cachedInpOptionsHints?.headloss?.uppercased() ?? "H-W") == "H-W"
+    }
+
     private func addLink() {
         guard !linkID.trimmingCharacters(in: .whitespaces).isEmpty,
               !fromNodeID.trimmingCharacters(in: .whitespaces).isEmpty,
@@ -363,13 +457,14 @@ private struct AddToolsSection: View {
             isError = true
             return
         }
+        let roughOut = useIntegerRoughnessHazenWilliams ? Double(Int(roughness.rounded())) : roughness
         appState.addPipe(
             linkID: linkID,
             fromNodeID: fromNodeID,
             toNodeID: toNodeID,
             length: length,
             diameter: diameter,
-            roughness: roughness
+            roughness: roughOut
         )
         if let err = appState.errorMessage, err.contains("新增管段失败") {
             message = err
@@ -491,7 +586,7 @@ private struct NodeBasicInfoSection: View {
             PropertyFieldRow(label: units.elevation, value: $elevationText)
             PropertyFieldRow(label: "X 坐标", value: $xCoordText)
             PropertyFieldRow(label: "Y 坐标", value: $yCoordText)
-            PropertyFieldRow(label: "基本需水量 (\(units.flowUnitDisplay))", value: $baseDemandText)
+            PropertyFieldRow(label: "基本需水量", value: $baseDemandText)
 
             HStack(spacing: 8) {
                 Button("刷新") { loadValues() }
@@ -524,7 +619,7 @@ private struct NodeBasicInfoSection: View {
             let baseDemand = try project.getNodeValue(nodeIndex: nodeIndex, param: .basedemand)
             let x = try project.getNodeValue(nodeIndex: nodeIndex, param: .xcoord)
             let y = try project.getNodeValue(nodeIndex: nodeIndex, param: .ycoord)
-            elevationText = String(format: "%.4f", elevation)
+            elevationText = String(format: "%.2f", elevation)
             baseDemandText = String(format: "%.4f", baseDemand)
             xCoordText = String(format: "%.4f", x)
             yCoordText = String(format: "%.4f", y)
@@ -606,6 +701,11 @@ private struct LinkBasicInfoSection: View {
     @State private var formMessageIsError = false
     @State private var linkCommitTask: Task<Void, Never>?
 
+    /// Hazen-Williams 下粗糙度为 C 系数，界面按整数编辑；D-W / C-M 仍用小数。
+    private var useIntegerRoughnessHazenWilliams: Bool {
+        (appState.cachedInpOptionsHints?.headloss?.uppercased() ?? "H-W") == "H-W"
+    }
+
     private var linkID: String {
         (try? project.getLinkId(index: linkIndex)) ?? ""
     }
@@ -645,6 +745,7 @@ private struct LinkBasicInfoSection: View {
         .padding(.bottom, DesignSizes.fieldGroupMarginBottom)
         .onAppear { loadValues() }
         .onChange(of: linkIndex) { _ in loadValues() }
+        .onChange(of: appState.cachedInpOptionsHints?.headloss) { _ in loadValues() }
         .onChange(of: lengthText) { _ in scheduleLinkFieldCommit() }
         .onChange(of: diameterText) { _ in scheduleLinkFieldCommit() }
         .onChange(of: roughnessText) { _ in scheduleLinkFieldCommit() }
@@ -657,9 +758,13 @@ private struct LinkBasicInfoSection: View {
             let length = try project.getLinkValue(linkIndex: linkIndex, param: .length)
             let diameter = try project.getLinkValue(linkIndex: linkIndex, param: .diameter)
             let roughness = try project.getLinkValue(linkIndex: linkIndex, param: .roughness)
-            lengthText = String(format: "%.4f", length)
-            diameterText = String(format: "%.4f", diameter)
-            roughnessText = String(format: "%.4f", roughness)
+            lengthText = NumericDisplayFormat.formatPipeLengthOrDiameter(length)
+            diameterText = NumericDisplayFormat.formatPipeLengthOrDiameter(diameter)
+            if useIntegerRoughnessHazenWilliams {
+                roughnessText = String(format: "%.0f", roughness.rounded())
+            } else {
+                roughnessText = String(format: "%.4f", roughness)
+            }
             committedLengthText = lengthText
             committedDiameterText = diameterText
             committedRoughnessText = roughnessText
@@ -687,9 +792,12 @@ private struct LinkBasicInfoSection: View {
         let t = { (s: String) -> String in s.trimmingCharacters(in: .whitespacesAndNewlines) }
         guard let length = Double(t(lengthText)),
               let diameter = Double(t(diameterText)),
-              let roughness = Double(t(roughnessText)) else {
+              let roughnessParsed = Double(t(roughnessText)) else {
             return
         }
+        let roughness: Double = useIntegerRoughnessHazenWilliams
+            ? Double(Int(roughnessParsed.rounded()))
+            : roughnessParsed
         var changed: Set<InpLinkPatchField> = []
         if lengthText != committedLengthText { changed.insert(.length) }
         if diameterText != committedDiameterText { changed.insert(.diameter) }
@@ -712,7 +820,12 @@ private struct LinkBasicInfoSection: View {
         formMessageIsError = false
         committedLengthText = lengthText
         committedDiameterText = diameterText
-        committedRoughnessText = roughnessText
+        if useIntegerRoughnessHazenWilliams {
+            roughnessText = String(format: "%.0f", roughness)
+            committedRoughnessText = roughnessText
+        } else {
+            committedRoughnessText = roughnessText
+        }
     }
 }
 

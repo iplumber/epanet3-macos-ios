@@ -57,6 +57,9 @@ void Junction::convertUnits(Network* nw)
     {
         demand.baseDemand /= qcf;
     }
+    // Keep primary demand in the same internal flow units as `demands` (was missing before;
+    // export was applying ucf twice for values read only into primaryDemand).
+    primaryDemand.baseDemand /= qcf;
 
     // ... convert emitter flow units
 

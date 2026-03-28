@@ -130,6 +130,9 @@ class Utilities
         return !ss.fail();
     }
 
+/// Formats a double for INP text: whole numbers without a decimal point, otherwise decimals without trailing zeros.
+    static std::string inpDoubleToStr(double v);
+
 };
 
 #endif

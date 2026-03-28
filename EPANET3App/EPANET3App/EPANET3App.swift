@@ -20,6 +20,10 @@ struct EPANET3App: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("文件") {
+                Button("新建文件") {
+                    appState.newFile()
+                }
+                .keyboardShortcut("n", modifiers: .command)
                 Button("打开") {
                     appState.openFile()
                 }

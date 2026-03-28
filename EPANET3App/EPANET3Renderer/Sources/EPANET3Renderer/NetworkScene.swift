@@ -7,11 +7,14 @@ public struct NodeVertex {
     public let x: Float
     public let y: Float
     public let nodeIndex: Int
+    /// 与 `NodeTypes` 一致：0=junction，1=reservoir，2=tank（供画布按设置着色）
+    public let kind: UInt8
 
-    public init(x: Float, y: Float, nodeIndex: Int) {
+    public init(x: Float, y: Float, nodeIndex: Int, kind: UInt8 = 0) {
         self.x = x
         self.y = y
         self.nodeIndex = nodeIndex
+        self.kind = kind
     }
 }
 
@@ -19,13 +22,16 @@ public struct LinkVertex {
     public let x1: Float, y1: Float
     public let x2: Float, y2: Float
     public let linkIndex: Int
+    /// 0=Pipe/CVPIPE，1=Pump，2=阀门等（与画布设置着色一致）
+    public let kind: UInt8
 
-    public init(x1: Float, y1: Float, x2: Float, y2: Float, linkIndex: Int) {
+    public init(x1: Float, y1: Float, x2: Float, y2: Float, linkIndex: Int, kind: UInt8 = 0) {
         self.x1 = x1
         self.y1 = y1
         self.x2 = x2
         self.y2 = y2
         self.linkIndex = linkIndex
+        self.kind = kind
     }
 }
 

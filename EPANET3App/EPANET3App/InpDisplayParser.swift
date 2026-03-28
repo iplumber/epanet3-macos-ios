@@ -9,8 +9,10 @@ struct InpDisplayParser {
     }
 
     static func parse(content: String) throws -> NetworkScene {
-        var sectionNodeIds: [String] = []
-        var linkList: [(id: String, node1: String, node2: String)] = []
+        /// 按 .inp 出现顺序记录 (id, kind)：0=Junction 1=Reservoir 2=Tank
+        var sectionNodes: [(String, UInt8)] = []
+        /// kind：0=Pipe 1=Pump 2=Valve（与 `LinkVertex.kind` / Metal 一致）
+        var linkList: [(id: String, node1: String, node2: String, kind: UInt8)] = []
         var coords: [String: (x: Float, y: Float)] = [:]
 
         let lines = content.components(separatedBy: .newlines)
@@ -41,17 +43,17 @@ struct InpDisplayParser {
 
             switch section {
             case "JUNCTION":
-                if tokens.count >= 1 { sectionNodeIds.append(tokens[0]) }
+                if tokens.count >= 1 { sectionNodes.append((tokens[0], 0)) }
             case "RESERVOIR":
-                if tokens.count >= 1 { sectionNodeIds.append(tokens[0]) }
+                if tokens.count >= 1 { sectionNodes.append((tokens[0], 1)) }
             case "TANK":
-                if tokens.count >= 1 { sectionNodeIds.append(tokens[0]) }
+                if tokens.count >= 1 { sectionNodes.append((tokens[0], 2)) }
             case "PIPE":
-                if tokens.count >= 3 { linkList.append((tokens[0], tokens[1], tokens[2])) }
+                if tokens.count >= 3 { linkList.append((tokens[0], tokens[1], tokens[2], 0)) }
             case "PUMP":
-                if tokens.count >= 3 { linkList.append((tokens[0], tokens[1], tokens[2])) }
+                if tokens.count >= 3 { linkList.append((tokens[0], tokens[1], tokens[2], 1)) }
             case "VALVE":
-                if tokens.count >= 3 { linkList.append((tokens[0], tokens[1], tokens[2])) }
+                if tokens.count >= 3 { linkList.append((tokens[0], tokens[1], tokens[2], 2)) }
             case "COORD":
                 if tokens.count >= 3, let x = Float(tokens[1]), let y = Float(tokens[2]) {
                     coords[tokens[0]] = (x, y)
@@ -62,9 +64,11 @@ struct InpDisplayParser {
         }
 
         var orderedIds: [String] = []
+        var idKind: [String: UInt8] = [:]
         var seen = Set<String>()
-        for id in sectionNodeIds where !seen.contains(id) {
+        for (id, k) in sectionNodes where !seen.contains(id) {
             orderedIds.append(id)
+            idKind[id] = k
             seen.insert(id)
         }
         for link in linkList {
@@ -80,7 +84,8 @@ struct InpDisplayParser {
         var nodes: [NodeVertex] = []
         for (i, id) in orderedIds.enumerated() {
             let c = coords[id] ?? (0, 0)
-            nodes.append(NodeVertex(x: c.x, y: c.y, nodeIndex: i))
+            let k = idKind[id] ?? 0
+            nodes.append(NodeVertex(x: c.x, y: c.y, nodeIndex: i, kind: k))
         }
 
         var links: [LinkVertex] = []
@@ -88,7 +93,7 @@ struct InpDisplayParser {
             guard idToIndex[link.node1] != nil, idToIndex[link.node2] != nil else { continue }
             let c1 = coords[link.node1] ?? (0, 0)
             let c2 = coords[link.node2] ?? (0, 0)
-            links.append(LinkVertex(x1: c1.x, y1: c1.y, x2: c2.x, y2: c2.y, linkIndex: idx))
+            links.append(LinkVertex(x1: c1.x, y1: c1.y, x2: c2.x, y2: c2.y, linkIndex: idx, kind: link.kind))
         }
 
         if nodes.isEmpty && links.isEmpty { throw NSError(domain: "InpDisplayParser", code: 200, userInfo: [NSLocalizedDescriptionKey: "无可显示节点或管段"]) }

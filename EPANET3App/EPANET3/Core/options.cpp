@@ -13,6 +13,7 @@
 #include "network.h"
 #include "constants.h"
 #include "error.h"
+#include "Elements/element.h"
 #include "Elements/pattern.h"
 #include "Models/qualmodel.h"
 #include "Utilities/utilities.h"
@@ -70,6 +71,7 @@ Options::Options()
 
 void Options::setDefaults()
 {
+    outputFracDigits                       = 4;
     stringOptions[HYD_FILE_NAME]           = "";
     stringOptions[OUT_FILE_NAME]           = "";
     stringOptions[RPT_FILE_NAME]           = "";
@@ -333,104 +335,69 @@ void Options::adjustOptions()
 
 //-----------------------------------------------------------------------------
 
-string Options::hydOptionsToStr()
+string Options::epanet2OptionsToStr(Network* network)
 {
-    int w = 26;
+    // Field names and order follow EPANET 2.x / typical net1.inp [OPTIONS] for EPANET 2.2 compatibility.
+    const int w = 19;
     stringstream s;
-    s << left << fixed << setprecision(4);
-    s << setw(w) <<"FLOW_UNITS";
-    s << flowUnitsWords[indexOptions[FLOW_UNITS]] << "\n";
-    s << setw(w) << "PRESSURE_UNITS";
-    s << pressureUnitsWords[indexOptions[PRESSURE_UNITS]] << "\n";
-    s << setw(w) << "HEADLOSS_MODEL";
-    s << stringOptions[HEADLOSS_MODEL] << "\n";
-    s << setw(w) << "SPECIFIC_GRAVITY";
-    s << valueOptions[SPEC_GRAVITY] << "\n";
-    s << setw(w) << "SPECIFIC_VISCOSITY";
-    s << valueOptions[KIN_VISCOSITY] / VISCOSITY << "\n\n";
+    s << left;
 
-    s << setw(w) << "MAXIMUM_TRIALS";
-    s << indexOptions[MAX_TRIALS] << "\n";
-    s << setw(w) << "HEAD_TOLERANCE";
-    s << valueOptions[HEAD_TOLERANCE] << "\n";
-    s << setw(w) << "FLOW_TOLERANCE";
-    s << valueOptions[FLOW_TOLERANCE] << "\n";
-    s << setw(w) << "FLOW_CHANGE_LIMIT";
-    s << valueOptions[FLOW_CHANGE_LIMIT] << "\n";
-    if ( valueOptions[RELATIVE_ACCURACY] > 0.0 )
+    s << setw(w) << "Units" << flowUnitsWords[indexOptions[FLOW_UNITS]] << "\n";
+    s << setw(w) << "Headloss" << stringOptions[HEADLOSS_MODEL] << "\n";
+    s << setw(w) << "Specific Gravity" << Utilities::inpDoubleToStr(valueOptions[SPEC_GRAVITY]) << "\n";
+    s << setw(w) << "Viscosity" << Utilities::inpDoubleToStr(valueOptions[KIN_VISCOSITY] / VISCOSITY) << "\n";
+    s << setw(w) << "Trials" << indexOptions[MAX_TRIALS] << "\n";
+
+    double accuracy = valueOptions[RELATIVE_ACCURACY];
+    if ( accuracy <= 0.0 ) accuracy = valueOptions[HEAD_TOLERANCE];
+    if ( accuracy <= 0.0 ) accuracy = 0.001;
+    s << setw(w) << "Accuracy" << Utilities::inpDoubleToStr(accuracy) << "\n";
+
+    s << setw(w) << "CHECKFREQ" << "2" << "\n";
+    s << setw(w) << "MAXCHECK" << "10" << "\n";
+    s << setw(w) << "DAMPLIMIT" << Utilities::inpDoubleToStr(0.0) << "\n";
+
+    // Compare numeric values (IfUnbalanced::CONTINUE) — avoid Windows CONTINUE macro clash.
+    if ( indexOptions[IF_UNBALANCED] != 0 )
+        s << setw(w) << "Unbalanced" << "Continue 10" << "\n";
+    else
+        s << setw(w) << "Unbalanced" << "Stop" << "\n";
+
+    string patName = stringOptions[DEMAND_PATTERN_NAME];
+    if ( patName.empty() && network && network->count(Element::PATTERN) > 0 )
+        patName = network->pattern(0)->name;
+    if ( patName.empty() ) patName = "1";
+    s << setw(w) << "Pattern" << patName << "\n";
+
+    s << setw(w) << "Demand Multiplier" << Utilities::inpDoubleToStr(valueOptions[DEMAND_MULTIPLIER]) << "\n";
+    s << setw(w) << "Emitter Exponent" << Utilities::inpDoubleToStr(valueOptions[EMITTER_EXPONENT]) << "\n";
+
+    string qualVal;
+    switch ( indexOptions[QUAL_TYPE] )
     {
-        s << setw(w) << "RELATIVE_ACCURACY";
-        s << valueOptions[RELATIVE_ACCURACY] << "\n";
+    case NOQUAL:
+        qualVal = "NONE";
+        break;
+    case AGE:
+        qualVal = "Age";
+        break;
+    case TRACE:
+        qualVal = string("Trace ") + stringOptions[TRACE_NODE_NAME];
+        break;
+    case CHEM:
+    default:
+        {
+            string units = "mg/L";
+            if ( indexOptions[QUAL_UNITS] == UGL ) units = "ug/L";
+            else if ( indexOptions[QUAL_UNITS] == MGL ) units = "mg/L";
+            qualVal = stringOptions[QUAL_NAME] + " " + units;
+        }
+        break;
     }
-    s << setw(w) << "TIME_WEIGHT";
-    s << valueOptions[TIME_WEIGHT] << "\n";
-    s << setw(w) << "STEP_SIZING";
-    s << stringOptions[STEP_SIZING] << "\n";
-    s << setw(w) << "IF_UNBALANCED";
-    s << ifUnbalancedWords[indexOptions[IF_UNBALANCED]] << "\n\n";
-    return s.str();
-}
+    s << setw(w) << "Quality" << qualVal << "\n";
 
-//-----------------------------------------------------------------------------
-
-string Options::demandOptionsToStr()
-{
-    int w = 26;
-    stringstream s;
-    s << left << fixed << setprecision(4);
-    s << setw(w) << "DEMAND_MODEL";
-    s << stringOptions[DEMAND_MODEL] << "\n";
-    s << setw(w) << "DEMAND_PATTERN";
-    s << stringOptions[DEMAND_PATTERN_NAME] << "\n";
-    s << setw(w) << "DEMAND_MULTIPLIER";
-    s << valueOptions[DEMAND_MULTIPLIER] << "\n";
-    s << setw(w) << "MINIMUM_PRESSURE";
-    s << valueOptions[MINIMUM_PRESSURE] << "\n";
-    s << setw(w) << "SERVICE_PRESSURE";
-    s << valueOptions[SERVICE_PRESSURE] << "\n";
-    s << setw(w) << "PRESSURE_EXPONENT";
-    s << valueOptions[PRESSURE_EXPONENT] << "\n\n";
-
-    s << setw(w) << "LEAKAGE_MODEL";
-    s << stringOptions[LEAKAGE_MODEL] << "\n";
-    s << setw(w) << "LEAKAGE_COEFF1";
-    s << valueOptions[LEAKAGE_COEFF1] << "\n";
-    s << setw(w) << "LEAKAGE_COEFF2";
-    s << valueOptions[LEAKAGE_COEFF2] << "\n";
-    s << setw(w) << "EMITTER_EXPONENT";
-    s << valueOptions[EMITTER_EXPONENT] << "\n";
-
-    return s.str();
-}
-
-//-----------------------------------------------------------------------------
-
-string Options::qualOptionsToStr()
-{
-    int w = 26;
-    stringstream s;
-    s << left << fixed << setprecision(4);
-    s << setw(w) << "QUALITY_MODEL";
-    s << stringOptions[QUAL_MODEL] << "\n";
-
-    int qualType = indexOptions[QUAL_TYPE];
-    if ( qualType == CHEM )
-    {
-        s << setw(w) << "QUALITY_NAME";
-        s << stringOptions[QUAL_NAME] << "\n";
-        s << setw(w) << "QUALITY_UNITS";
-        s << qualUnitsWords[qualType] << "\n";
-    }
-    else if ( qualType == TRACE )
-    {
-        s << setw(w) << "TRACE_NODE";
-        s << stringOptions[TRACE_NODE_NAME] << "\n";
-    }
-
-    s << setw(w) << "SPECIFIC_DIFFUSIVITY";
-    s << valueOptions[MOLEC_DIFFUSIVITY] / DIFFUSIVITY << "\n";
-    s << setw(w) << "QUALITY_TOLERANCE";
-    s << valueOptions[QUAL_TOLERANCE] << "\n";
+    s << setw(w) << "Diffusivity" << Utilities::inpDoubleToStr(valueOptions[MOLEC_DIFFUSIVITY] / DIFFUSIVITY) << "\n";
+    s << setw(w) << "Tolerance" << Utilities::inpDoubleToStr(valueOptions[QUAL_TOLERANCE]) << "\n";
     return s.str();
 }
 
@@ -440,11 +407,11 @@ string Options::energyOptionsToStr(Network* network)
 {
     int w = 26;
     stringstream s;
-    s << left << fixed << setprecision(4);
+    s << left;
     s << setw(w) << "GLOBAL EFFICIENCY ";
-    s << valueOptions[PUMP_EFFICIENCY] << "\n";
+    s << Utilities::inpDoubleToStr(valueOptions[PUMP_EFFICIENCY]) << "\n";
     s << setw(w) << "GLOBAL PRICE";
-    s << valueOptions[ENERGY_PRICE] << "\n";
+    s << Utilities::inpDoubleToStr(valueOptions[ENERGY_PRICE]) << "\n";
     int p = indexOptions[ENERGY_PRICE_PATTERN];
     if (p >= 0)
     {
@@ -452,7 +419,7 @@ string Options::energyOptionsToStr(Network* network)
         s << network->pattern(p)->name << "\n";
     }
     s << setw(w) << "DEMAND CHARGE";
-    s << valueOptions[PEAKING_CHARGE] << "\n";
+    s << Utilities::inpDoubleToStr(valueOptions[PEAKING_CHARGE]) << "\n";
     return s.str();
 }
 
@@ -462,16 +429,46 @@ string Options::reactOptionsToStr()
 {
     int w = 26;
     stringstream s;
-    s << left << fixed << setprecision(4);
-    s << setw(w) << "ORDER BULK" << valueOptions[BULK_ORDER] << "\n";
-    s << setw(w) << "ORDER WALL" << valueOptions[WALL_ORDER] << "\n";
-    s << setw(w) << "ORDER TANK" << valueOptions[TANK_ORDER] << "\n";
-    s << setw(w) << "GLOBAL BULK" << valueOptions[BULK_COEFF] << "\n";
-    s << setw(w) << "GLOBAL WALL" << valueOptions[WALL_COEFF] << "\n";
+    s << left;
+    s << setw(w) << "ORDER BULK" << Utilities::inpDoubleToStr(valueOptions[BULK_ORDER]) << "\n";
+    s << setw(w) << "ORDER WALL" << Utilities::inpDoubleToStr(valueOptions[WALL_ORDER]) << "\n";
+    s << setw(w) << "ORDER TANK" << Utilities::inpDoubleToStr(valueOptions[TANK_ORDER]) << "\n";
+    s << setw(w) << "GLOBAL BULK" << Utilities::inpDoubleToStr(valueOptions[BULK_COEFF]) << "\n";
+    s << setw(w) << "GLOBAL WALL" << Utilities::inpDoubleToStr(valueOptions[WALL_COEFF]) << "\n";
     s << setw(w) << "LIMITING POTENTIAL" <<
-        valueOptions[LIMITING_CONCEN] << "\n";
+        Utilities::inpDoubleToStr(valueOptions[LIMITING_CONCEN]) << "\n";
     s << setw(w) << "ROUGHNESS CORRELATION" <<
-        valueOptions[ROUGHNESS_FACTOR] << "\n";
+        Utilities::inpDoubleToStr(valueOptions[ROUGHNESS_FACTOR]) << "\n";
+    return s.str();
+}
+
+//-----------------------------------------------------------------------------
+
+string Options::epanet2TimeOptionsToStr()
+{
+    int w = 26;
+    stringstream s;
+    s << left;
+    // EPANET 2.2 timedata() expects DURATION (not TOTAL DURATION), etc. (see EPANET2.2 SRC_engines/input3.c timedata).
+    s << setw(w) << "Duration" <<
+        Utilities::getTime(timeOptions[TOTAL_DURATION]) << "\n";
+    s << setw(w) << "Hydraulic Timestep" <<
+        Utilities::getTime(timeOptions[HYD_STEP]) << "\n";
+    s << setw(w) << "Quality Timestep" <<
+        Utilities::getTime(timeOptions[QUAL_STEP]) << "\n";
+    s << setw(w) << "Rule Timestep" <<
+        Utilities::getTime(timeOptions[RULE_STEP]) << "\n";
+    s << setw(w) << "Pattern Timestep" <<
+        Utilities::getTime(timeOptions[PATTERN_STEP]) << "\n";
+    s << setw(w) << "Pattern Start" <<
+        Utilities::getTime(timeOptions[PATTERN_START]) << "\n";
+    s << setw(w) << "Report Timestep" <<
+        Utilities::getTime(timeOptions[REPORT_STEP]) << "\n";
+    s << setw(w) << "Report Start" <<
+        Utilities::getTime(timeOptions[REPORT_START]) << "\n";
+    s << setw(w) << "Start ClockTime" <<
+        Utilities::getTime(timeOptions[START_TIME]) << "\n";
+    s << setw(w) << "Statistic" << "None\n";
     return s.str();
 }
 
@@ -481,7 +478,7 @@ string Options::timeOptionsToStr()
 {
     int w = 26;
     stringstream s;
-    s << left << fixed << setprecision(4);
+    s << left;
     s << setw(w) << "TOTAL DURATION" <<
         Utilities::getTime(timeOptions[TOTAL_DURATION]) << "\n";
     s << setw(w) << "HYDRAULIC TIMESTEP" <<
@@ -509,7 +506,7 @@ string Options::reportOptionsToStr()
 {
     int w = 26;
     stringstream s;
-    s << left << fixed << setprecision(4);
+    s << left;
     if ( indexOptions[REPORT_SUMMARY] )
         s << setw(w) << "SUMMARY" << "YES\n";
     if ( indexOptions[REPORT_ENERGY] )

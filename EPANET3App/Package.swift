@@ -52,7 +52,7 @@ let package = Package(
             name: "EPANET3AppUI",
             dependencies: ["EPANET3Bridge", "EPANET3Renderer"],
             path: "EPANET3App",
-            sources: ["ContentView.swift", "AppState.swift", "PropertyPanelView.swift", "SettingsView.swift", "InpOptionsParser.swift", "InpDisplayParser.swift", "InpFileTextReader.swift", "InpPreservingSaver.swift", "DesignTokens.swift"]
+            sources: ["ContentView.swift", "AppState.swift", "CanvasViewportFraming.swift", "CanvasMapLabelsOverlay.swift", "CanvasLabelsLegend.swift", "NumericDisplayFormat.swift", "NoriaAppInfo.swift", "InpNumericFormat.swift", "PropertyPanelView.swift", "SettingsView.swift", "InpOptionsParser.swift", "InpDisplayParser.swift", "InpFileTextReader.swift", "InpPreservingSaver.swift", "DesignTokens.swift"]
         ),
         .executableTarget(
             name: "EPANET3App",

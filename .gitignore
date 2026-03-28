@@ -22,6 +22,9 @@ DerivedData/
 epanet  resource/epanet-dev-develop/build/
 epanet  resource/EPANET2.2-2.2.0/build/
 
+### EPANET 2.2 engine CLI (built locally next to SRC_engines; not part of SwiftPM)
+EPANET2.2-2.2.0/build/
+
 ### EPANET resources (keep local, only track selected inp files)
 epanet  resource/**
 
@@ -34,6 +37,12 @@ epanet  resource/**
 !epanet  resource/example/可计算 算例管网 inp/400.inp
 !epanet  resource/example/可计算 算例管网 inp/10000.inp
 !epanet  resource/example/可计算 算例管网 inp/90000.inp
+!epanet  resource/example/可计算 算例管网 inp/guangzhou_xiaoguwei_osm_epanet22.inp
+!epanet  resource/example/可计算 算例管网 inp/amberfield.inp
+!epanet  resource/example/可计算 算例管网 inp/rivervale_district.inp
+
+### OSM Overpass cache (regenerate with curl + scripts/osm_roads_to_inp.py --from-json)
+scripts/xiaoguwei_overpass_osm.json
 
 ### Large EPANET example not tracked
 epanet  resource/example/可计算 算例管网 inp/490000.inp

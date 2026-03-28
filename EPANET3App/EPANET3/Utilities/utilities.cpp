@@ -8,11 +8,13 @@
 #include "utilities.h"
 
 #include <cstdlib>
+#include <cmath>
 #include <algorithm>
 #include <iterator>
 #include <cctype>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -275,4 +277,29 @@ string Utilities::getTime(int seconds)
     sout << setw(2) << setfill('0') << minutes << ":";
     sout << setw(2) << setfill('0') << seconds;
     return sout.str();
+}
+
+//-----------------------------------------------------------------------------
+
+string Utilities::inpDoubleToStr(double v)
+{
+    if ( !std::isfinite(v) )
+    {
+        ostringstream os;
+        os << v;
+        return os.str();
+    }
+    double ri = std::round(v);
+    if ( std::fabs(v - ri) <= 1e-9 * (1.0 + std::fabs(v)) )
+    {
+        ostringstream os;
+        os << fixed << setprecision(0) << ri;
+        return os.str();
+    }
+    ostringstream os;
+    os << fixed << setprecision(12) << v;
+    string s = os.str();
+    while ( !s.empty() && s.back() == '0' ) s.pop_back();
+    if ( !s.empty() && s.back() == '.' ) s.pop_back();
+    return s;
 }

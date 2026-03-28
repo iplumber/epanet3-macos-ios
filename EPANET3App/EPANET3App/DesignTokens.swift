@@ -45,6 +45,12 @@ enum DesignColors {
     static let darkCanvasGrid = Color(red: 44/255.0, green: 44/255.0, blue: 44/255.0)       // #2c2c2c, opacity 0.35
 }
 
+/// 拓扑编辑「开启」时菜单/控件强调色（偏紫红/洋红，区别于水泵红、阀门橙、水库蓝紫）。
+public enum TopologyEditingAccent {
+    /// sRGB 约 #A83076：紫红为主，避免与泵管（偏红）、阀门（偏橙）混淆。
+    public static let menuOnTint = Color(red: 168/255, green: 48/255, blue: 118/255)
+}
+
 /// 设计稿字体规范
 enum DesignFonts {
     static let fieldLabel: Font = .system(size: 11, weight: .medium)
@@ -157,5 +163,71 @@ struct DesignTheme {
     }
     var accent: Color {
         colorScheme == .dark ? DesignColors.darkAccent : DesignColors.lightAccent
+    }
+}
+
+// MARK: - 画布节点颜色（UserDefaults ↔ Color ↔ Metal）
+
+enum DisplayCanvasNodeColor {
+    static let junctionKey = "settings.display.nodeRGB.junction"
+    static let reservoirKey = "settings.display.nodeRGB.reservoir"
+    static let tankKey = "settings.display.nodeRGB.tank"
+    /// 与旧版 Metal 默认 / 设置页示意接近（sRGB 8bit）
+    static let defaultJunction = 0x1A3380
+    static let defaultReservoir = 0x7D3EB8
+    static let defaultTank = 0x34A853
+
+    static func rgbFloats(packed: Int) -> (Float, Float, Float) {
+        let r = Float((packed >> 16) & 0xFF) / 255
+        let g = Float((packed >> 8) & 0xFF) / 255
+        let b = Float(packed & 0xFF) / 255
+        return (r, g, b)
+    }
+}
+
+// MARK: - 画布管段颜色（UserDefaults ↔ Color ↔ Metal）
+
+enum DisplayCanvasLinkColor {
+    static let pipeKey = "settings.display.linkRGB.pipe"
+    static let valveKey = "settings.display.linkRGB.valve"
+    static let pumpKey = "settings.display.linkRGB.pump"
+    /// 与旧版管线默认 / 设置页示意接近（sRGB 8bit）
+    static let defaultPipe = 0x3366B2
+    static let defaultValve = 0xFF9500
+    static let defaultPump = 0xCC3333
+
+    static func rgbFloats(packed: Int) -> (Float, Float, Float) {
+        DisplayCanvasNodeColor.rgbFloats(packed: packed)
+    }
+}
+
+extension Color {
+    /// `packed` = 0xRRGGBB（不含 alpha）
+    init(srgbRGB24 packed: Int) {
+        let r = Double((packed >> 16) & 0xFF) / 255
+        let g = Double((packed >> 8) & 0xFF) / 255
+        let b = Double(packed & 0xFF) / 255
+        self.init(red: r, green: g, blue: b)
+    }
+
+    /// 转为 sRGB 0xRRGGBB，失败时返回 `fallback`
+    func toSRGBRGB24(fallback: Int = DisplayCanvasNodeColor.defaultJunction) -> Int {
+        #if os(macOS)
+        guard let n = NSColor(self).usingColorSpace(.sRGB) else { return fallback }
+        let r = Int(round(n.redComponent * 255))
+        let g = Int(round(n.greenComponent * 255))
+        let b = Int(round(n.blueComponent * 255))
+        return (r << 16) | (g << 8) | b
+        #else
+        guard let n = UIColor(self).cgColor.converted(
+            to: CGColorSpace(name: CGColorSpace.sRGB)!,
+            intent: .defaultIntent,
+            options: nil
+        ), let comps = n.components, comps.count >= 3 else { return fallback }
+        let r = Int(round(comps[0] * 255))
+        let g = Int(round(comps[1] * 255))
+        let b = Int(round(comps[2] * 255))
+        return (r << 16) | (g << 8) | b
+        #endif
     }
 }

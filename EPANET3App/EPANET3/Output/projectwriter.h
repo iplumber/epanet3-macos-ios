@@ -51,6 +51,11 @@ class ProjectWriter
     void writeTags();
     void writeCoords();
     void writeAuxData();
+    void writeRules();
+    void writeVertices();
+    void writeLabels();
+    void writeBackdrop();
+
     Network* network;
     std::fstream fout;
 };

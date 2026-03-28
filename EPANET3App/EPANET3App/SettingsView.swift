@@ -1,44 +1,9 @@
 import SwiftUI
 import EPANET3Bridge
 
-public struct SettingsView: View {
-    @EnvironmentObject var appState: AppState
-    @State private var toolbarTab: SettingsToolbarTab = .hydraulic
+private let kPurple = Color(red: 109 / 255, green: 40 / 255, blue: 217 / 255)
 
-    public init() {}
-
-    public var body: some View {
-        #if os(macOS)
-        VStack(spacing: 0) {
-            SettingsLightTopToolbar(selection: $toolbarTab)
-            Group {
-                switch toolbarTab {
-                case .units:
-                    SettingsUnitsPane(appState: appState)
-                case .hydraulic:
-                    SettingsHydraulicPane(appState: appState)
-                case .simulation:
-                    SettingsSimulationPane(appState: appState)
-                case .display:
-                    SettingsDisplayPane()
-                case .general:
-                    SettingsGeneralPane()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .background(DesignColors.lightBg)
-        .frame(minWidth: 720, minHeight: 480)
-        .preferredColorScheme(.light)
-        #else
-        EmptyView()
-        #endif
-    }
-}
-
-#if os(macOS)
-
-// MARK: - 顶部工具栏 Tab 枚举
+// MARK: - 顶部工具栏 Tab 枚举（rawValue 与 `AppState.settingsPendingToolbarTab` 一致）
 
 private enum SettingsToolbarTab: Int, CaseIterable, Identifiable {
     case units, hydraulic, simulation, display, general
@@ -86,7 +51,65 @@ private enum SettingsToolbarTab: Int, CaseIterable, Identifiable {
     }
 }
 
-private let kPurple = Color(red: 109 / 255, green: 40 / 255, blue: 217 / 255)
+public struct SettingsView: View {
+    @EnvironmentObject var appState: AppState
+    @State private var toolbarTab: SettingsToolbarTab = .hydraulic
+
+    public init() {}
+
+    public var body: some View {
+        #if os(macOS)
+        VStack(spacing: 0) {
+            SettingsLightTopToolbar(selection: $toolbarTab)
+            Group {
+                switch toolbarTab {
+                case .units:
+                    SettingsUnitsPane(appState: appState)
+                case .hydraulic:
+                    SettingsHydraulicPane(appState: appState)
+                case .simulation:
+                    SettingsSimulationPane(appState: appState)
+                case .display:
+                    SettingsDisplayPane()
+                case .general:
+                    SettingsGeneralPane()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(DesignColors.lightBg)
+        .frame(minWidth: 720, minHeight: 640)
+        .preferredColorScheme(.light)
+        .onAppear { consumeSettingsPendingTab() }
+        .onChange(of: appState.settingsPendingToolbarTab) { _ in consumeSettingsPendingTab() }
+        #else
+        EmptyView()
+        #endif
+    }
+
+    #if os(macOS)
+    private func consumeSettingsPendingTab() {
+        guard let raw = appState.settingsPendingToolbarTab,
+              let tab = SettingsToolbarTab(rawValue: raw) else { return }
+        toolbarTab = tab
+        appState.settingsPendingToolbarTab = nil
+    }
+    #endif
+}
+
+#if os(macOS)
+
+/// 与 `epanet-settings-light.html` 对齐：`.field { min-width:80px }`、`.picker { min-width:120px }`
+private enum SettingsPixelLayout {
+    /// 所有数值/文本输入框统一宽度（pt，约等于稿 80px 在 1x 下的视觉比例）
+    static let fieldWidth: CGFloat = 88
+    static let pickerMinWidth: CGFloat = 120
+    static let segmentedExtraPadding: CGFloat = 8
+    /// 计算参数页：单位菜单（h / min / sec）与 H:mm 共用列宽 **70 pt**
+    static let simulationTrailingWidth: CGFloat = 70
+    /// 与左侧 `SettingsTextField` 对齐：13pt 单行约 16pt 行高 + 上下 `padding(.vertical, 5)` 各 5 → **约 26 pt**；右侧 Picker/H:mm 与此同高
+    static let simulationControlHeight: CGFloat = 26
+}
 
 // MARK: - 顶部图标工具栏
 
@@ -150,9 +173,16 @@ private struct SettingsUnitsPane: View {
     @State private var flowUnitsChoice = "GPM"
     @State private var message: String?
     @State private var isError = false
+    /// 由 .inp 解析一次写入，避免 `body` 每次重算都整文件读 HEADLOSS。
+    @State private var headlossCodeFromInp = "H-W"
+
+    @AppStorage("settings.detail.pressureUnit") private var pressureUnit = "m"
+    @AppStorage("settings.detail.lengthSystem") private var lengthSystem = "SI" // SI | US
+    @AppStorage("settings.detail.velocityUnit") private var velocityUnit = "m/s"
+    @AppStorage("settings.detail.headElevUnit") private var headElevUnit = "m"
 
     private var isUS: Bool {
-        InpOptionsParser.isUSCustomary(flowUnits: flowUnitsChoice)
+        InpOptionsParser.isUSCustomary(flowUnits: flowUnitsChoice) || lengthSystem == "US"
     }
 
     var body: some View {
@@ -161,33 +191,77 @@ private struct SettingsUnitsPane: View {
                 VStack(alignment: .leading, spacing: 0) {
                     paneTitle("单位与流量")
 
-                    sectionLabel("流量单位")
-                    SettingsFormRow(label: "Flow Units", subtitle: "切换后将重载当前 .inp") {
+                    sectionLabel("单位 UNITS")
+                    SettingsFormRow(label: "流量单位", subtitle: "与 EPANET [OPTIONS] Flow Units 关键字一致；下拉里为各代码对应中文释义，应用后重载 .inp") {
                         Picker("", selection: $flowUnitsChoice) {
-                            Text("GPM").tag("GPM")
-                            Text("LPS").tag("LPS")
-                            Text("MLD").tag("MLD")
-                            Text("CMH").tag("CMH")
-                            Text("CFS").tag("CFS")
-                            Text("MGD").tag("MGD")
+                            ForEach(InpOptionsParser.epanetFlowUnitsOrdered, id: \.code) { item in
+                                Text(item.menuLabel).tag(item.code)
+                            }
                         }
                         .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(width: 320)
+                        .pickerStyle(.menu)
+                        .frame(minWidth: SettingsPixelLayout.pickerMinWidth)
                     }
-                    SettingsFormRow(label: "应用", subtitle: nil) {
-                        Button("应用 Flow Units 切换（重载）") { switchFlowUnits() }
+                    SettingsFormRow(label: "应用流量单位", subtitle: nil) {
+                        Button("应用并重载") { switchFlowUnits() }
                             .buttonStyle(SettingsPrimaryButtonStyle())
                     }
 
-                    sectionLabel("派生单位（只读，随 Flow Units 自动变化）")
-                    unitInfoRow("单位制", isUS ? "US Customary" : "SI (国际单位)")
-                    unitInfoRow("压力单位", isUS ? "psi" : "m（水头）")
-                    unitInfoRow("长度单位", isUS ? "ft" : "m")
-                    unitInfoRow("管径单位", isUS ? "in" : "mm")
-                    unitInfoRow("流速单位", isUS ? "ft/s" : "m/s")
-                    unitInfoRow("水头/高程单位", isUS ? "ft" : "m")
-                    unitInfoRow("粗糙度单位", "随摩阻公式（H-W: C 系数；D-W: mm/ft；C-M: 无量纲）")
+                    SettingsFormRow(label: "压力单位", subtitle: "m（水头）· kPa · psi · bar；影响节点压力显示与阈值判断") {
+                        Picker("", selection: $pressureUnit) {
+                            Text("m").tag("m")
+                            Text("kPa").tag("kPa")
+                            Text("psi").tag("psi")
+                            Text("bar").tag("bar")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(minWidth: SettingsPixelLayout.pickerMinWidth)
+                    }
+
+                    SettingsFormRow(label: "长度 / 管径单位", subtitle: "m / mm（SI）· ft / in（US）；SI/US 联动") {
+                        Picker("", selection: $lengthSystem) {
+                            Text("SI（m / mm）").tag("SI")
+                            Text("US（ft / in）").tag("US")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(minWidth: SettingsPixelLayout.pickerMinWidth + 40)
+                    }
+
+                    SettingsFormRow(label: "流速单位", subtitle: "m/s · ft/s；切换 SI/US 时自动联动") {
+                        Picker("", selection: $velocityUnit) {
+                            Text("m/s").tag("m/s")
+                            Text("ft/s").tag("ft/s")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(minWidth: SettingsPixelLayout.pickerMinWidth)
+                    }
+
+                    SettingsFormRow(label: "水头 / 高程单位", subtitle: "节点高程、水头损失显示") {
+                        Picker("", selection: $headElevUnit) {
+                            Text("m").tag("m")
+                            Text("ft").tag("ft")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(minWidth: SettingsPixelLayout.pickerMinWidth)
+                    }
+
+                    SettingsFormRow(label: "粗糙度单位", subtitle: "只读（随摩阻公式）；H-W：C 系数；D-W：mm；C-M：无量纲") {
+                        settingsReadonlyValue(roughnessUnitHint)
+                    }
+
+                    sectionLabel("派生预览（随流量单位 / SI·US）")
+                    unitInfoRow("单位制", isUS ? "US Customary" : "SI")
+                    unitInfoRow("压力显示", pressureUnit)
+                    unitInfoRow("长度", isUS ? "ft" : "m")
+                    unitInfoRow("管径", isUS ? "in" : "mm")
+                    unitInfoRow("流速", isUS ? "ft/s" : "m/s")
+                    unitInfoRow("水头/高程", headElevUnit)
+
+                    paneNote("压力/长度等选项当前保存在本机偏好中，用于界面展示规划；写入 .inp 的仍由 Flow Units 重载与引擎选项控制。")
 
                     if let message {
                         Text(message)
@@ -205,13 +279,43 @@ private struct SettingsUnitsPane: View {
 
             if appState.project == nil { noProjectOverlay() }
         }
-        .onAppear { syncFromAppState() }
+        .onAppear {
+            syncFromAppState()
+            refreshHeadlossCodeFromInp()
+        }
         .onChange(of: appState.inpFlowUnits) { _ in syncFromAppState() }
+        .onChange(of: appState.cachedInpOptionsHints) { _ in refreshHeadlossCodeFromInp() }
+        .onChange(of: lengthSystem) { new in
+            if new == "US" {
+                velocityUnit = "ft/s"
+                headElevUnit = "ft"
+            } else {
+                velocityUnit = "m/s"
+                headElevUnit = "m"
+            }
+        }
+    }
+
+    private var roughnessUnitHint: String {
+        guard appState.filePath != nil else { return "—（打开项目后随公式）" }
+        switch headlossCodeFromInp.uppercased() {
+        case "D-W": return isUS ? "ft（相对管径）" : "mm"
+        case "C-M": return "无量纲"
+        default: return "C 系数（无量纲）"
+        }
+    }
+
+    private func refreshHeadlossCodeFromInp() {
+        if let hl = appState.cachedInpOptionsHints?.headloss?.uppercased() {
+            headlossCodeFromInp = hl
+        } else {
+            headlossCodeFromInp = "H-W"
+        }
     }
 
     private func syncFromAppState() {
         let fu = appState.inpFlowUnits?.uppercased() ?? "GPM"
-        if ["GPM", "LPS", "MLD", "CMH", "CFS", "MGD"].contains(fu) {
+        if InpOptionsParser.isValidFlowUnitCode(fu) {
             flowUnitsChoice = fu
         }
     }
@@ -228,14 +332,7 @@ private struct SettingsUnitsPane: View {
 
     private func unitInfoRow(_ label: String, _ value: String) -> some View {
         SettingsFormRow(label: label, subtitle: nil) {
-            Text(value)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(DesignColors.lightText2)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(DesignColors.lightSurface2)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(DesignColors.lightBorder, lineWidth: 1))
-                .cornerRadius(4)
+            settingsReadonlyValue(value)
         }
     }
 }
@@ -285,16 +382,23 @@ private struct HydraulicContentView: View {
 
     @State private var accuracyText = ""
     @State private var hydTolText = ""
-    @State private var trialsText = ""
+    @State private var trialsCount = 40
     @State private var demandMultText = ""
     @State private var minPressureText = ""
     @State private var maxPressureText = ""
     @State private var pressExponText = ""
     @State private var emitExponText = ""
-    @State private var qualTolText = ""
     @State private var message: String?
     @State private var isError = false
     @State private var parsedHeadloss: String = "—"
+    @State private var headlossCode: String = "H-W"
+
+    @AppStorage("settings.detail.relativeConvergence") private var relativeConvergence = false
+    @AppStorage("settings.detail.viscosity") private var viscosityText = "1.0"
+    @AppStorage("settings.detail.diffusivity") private var diffusivityText = "1.0"
+    @AppStorage("settings.detail.usePDA") private var usePDA = false
+    @AppStorage("settings.detail.imbalanceStrategy") private var imbalanceStrategy = "warn"
+    @AppStorage("settings.detail.checkValveVelocity") private var checkValveVelocity = "0.01"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -339,28 +443,91 @@ private struct HydraulicContentView: View {
     private var convergenceSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionLabel("摩阻公式")
-            SettingsFormRow(label: "水头损失计算公式", subtitle: "影响管道粗糙度输入单位及含义") {
-                Text(parsedHeadloss)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(DesignColors.lightText2)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(DesignColors.lightSurface2)
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(DesignColors.lightBorder, lineWidth: 1))
-                    .cornerRadius(6)
+            SettingsFormRow(label: "水头损失计算公式", subtitle: "Hazen-Williams · Darcy-Weisbach · Chezy-Manning（由 .inp 解析，只读）") {
+                headlossSegmentedReadonly
+            }
+            SettingsFormRow(label: "粗糙度单位（当前公式）", subtitle: "切换公式后请重新核对管道属性") {
+                settingsReadonlyValue(roughnessUnitForHeadloss)
             }
 
             sectionLabel("收敛控制")
-            SettingsFormRow(label: "流量收敛精度", subtitle: "各管段流量残差上限 (ACCURACY)") {
-                SettingsTextField(text: $accuracyText)
+            SettingsFormRow(label: "流量收敛精度", subtitle: "0.0001 – 0.1，各管段流量残差上限 (ACCURACY)") {
+                HStack(spacing: 8) {
+                    SettingsTextField(text: $accuracyText)
+                    unitTag(flowUnitTag)
+                }
             }
-            SettingsFormRow(label: "水头收敛精度", subtitle: "各节点水头残差上限 (HEAD_TOLERANCE)") {
-                SettingsTextField(text: $hydTolText)
+            SettingsFormRow(label: "水头收敛精度", subtitle: "0.0001 – 0.1 m，各节点水头残差上限 (HEAD_TOLERANCE)") {
+                HStack(spacing: 8) {
+                    SettingsTextField(text: $hydTolText)
+                    unitTag("m")
+                }
             }
-            SettingsFormRow(label: "最大迭代次数", subtitle: "超限视为不收敛 (MAX_TRIALS)") {
-                SettingsTextField(text: $trialsText)
+            SettingsFormRow(label: "最大迭代次数", subtitle: "10 – 200，超限视为不收敛 (MAX_TRIALS)") {
+                HStack(spacing: 8) {
+                    stepperView(value: Binding(
+                        get: { trialsCount },
+                        set: { trialsCount = min(200, max(10, $0)) }
+                    ), range: 10...200)
+                }
+            }
+            SettingsFormRow(label: "相对收敛判据", subtitle: "以相对误差代替绝对误差（EPANET 3.0 规划项，偏好存本机）") {
+                Toggle("", isOn: $relativeConvergence)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+            SettingsFormRow(label: "不平衡处理策略", subtitle: "迭代不收敛时的行为（偏好存本机，引擎接口后续对接）") {
+                Picker("", selection: $imbalanceStrategy) {
+                    Text("继续迭代").tag("continue")
+                    Text("停止报错").tag("stop")
+                    Text("警告后继续").tag("warn")
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(minWidth: SettingsPixelLayout.pickerMinWidth)
+            }
+            SettingsFormRow(label: "检查截止流速", subtitle: "止回阀判断阈值 m/s（偏好存本机）") {
+                HStack(spacing: 8) {
+                    SettingsTextField(text: $checkValveVelocity)
+                    unitTag("m/s")
+                }
             }
         }
+    }
+
+    private var headlossSegmentedReadonly: some View {
+        HStack(spacing: 1) {
+            ForEach([("H-W", "H-W"), ("D-W", "D-W"), ("C-M", "C-M")], id: \.0) { code, short in
+                Text(short)
+                    .font(.system(size: 12, weight: headlossCode == code ? .medium : .regular))
+                    .foregroundColor(headlossCode == code ? DesignColors.lightText : DesignColors.lightText3)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(headlossCode == code ? DesignColors.lightSurface : Color.clear)
+                            .shadow(color: headlossCode == code ? Color.black.opacity(0.08) : .clear, radius: 2, y: 1)
+                    )
+            }
+        }
+        .padding(2)
+        .background(DesignColors.lightSurface2)
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(DesignColors.lightBorder, lineWidth: 1))
+        .cornerRadius(7)
+        .allowsHitTesting(false)
+        .accessibilityLabel("摩阻公式 \(parsedHeadloss)")
+    }
+
+    private var roughnessUnitForHeadloss: String {
+        switch headlossCode {
+        case "D-W": return InpOptionsParser.isUSCustomary(flowUnits: appState.inpFlowUnits) ? "ft" : "mm"
+        case "C-M": return "无量纲"
+        default: return "C 系数"
+        }
+    }
+
+    private var flowUnitTag: String {
+        InpOptionsParser.flowUnitDisplaySuffix(code: appState.inpFlowUnits)
     }
 
     // MARK: 需水量模型
@@ -368,17 +535,26 @@ private struct HydraulicContentView: View {
     private var demandSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionLabel("需水量模型")
+            SettingsFormRow(label: "模拟模型", subtitle: "DDA：需水量驱动 · PDA：压力驱动") {
+                Picker("", selection: $usePDA) {
+                    Text("DDA").tag(false)
+                    Text("PDA").tag(true)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(minWidth: SettingsPixelLayout.pickerMinWidth + 24)
+            }
             SettingsFormRow(label: "需水乘数", subtitle: "全局需水量倍率 (DEMAND_MULTIPLIER)") {
                 SettingsTextField(text: $demandMultText)
             }
-            SettingsFormRow(label: "最小服务压力 (PDA)", subtitle: "低于此值需水量为 0 (MINIMUM_PRESSURE)") {
-                HStack(spacing: 6) {
+            subFormRow(usePDA, label: "最小服务压力（PDA）", subtitle: "低于此值需水量为 0 (MINIMUM_PRESSURE)") {
+                HStack(spacing: 8) {
                     SettingsTextField(text: $minPressureText)
                     unitTag("m")
                 }
             }
-            SettingsFormRow(label: "设计服务压力 (PDA)", subtitle: "高于此值需水量完全满足 (SERVICE_PRESSURE)") {
-                HStack(spacing: 6) {
+            subFormRow(usePDA, label: "设计服务压力（PDA）", subtitle: "高于此值需水量完全满足 (SERVICE_PRESSURE)") {
+                HStack(spacing: 8) {
                     SettingsTextField(text: $maxPressureText)
                     unitTag("m")
                 }
@@ -386,7 +562,9 @@ private struct HydraulicContentView: View {
             SettingsFormRow(label: "压力指数 (PDA)", subtitle: "PDA 计算指数 (PRESSURE_EXPONENT)") {
                 SettingsTextField(text: $pressExponText)
             }
-            paneNote("PDA 模式下启用压力驱动需水量分配，适用于供水不足场景分析。最小/设计服务压力参数仅在 PDA 模式下生效。")
+            .opacity(usePDA ? 1 : 0.35)
+            .disabled(!usePDA)
+            paneNote("PDA 模式下启用压力驱动需水量分配。最小/设计服务压力仅在 PDA 下生效；DDA 时上两项已禁用。")
         }
     }
 
@@ -394,15 +572,28 @@ private struct HydraulicContentView: View {
 
     private var fluidSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionLabel("流体与发射")
-            SettingsFormRow(label: "发射器指数", subtitle: "发射器流量公式指数 (EMITTER_EXPONENT)") {
+            sectionLabel("流体属性")
+            SettingsFormRow(label: "动力粘度修正系数", subtitle: "相对值，1.0 = 20°C 清水；写入 .inp VISCOSITY 需手动（偏好先存本机）") {
+                SettingsTextField(text: $viscosityText)
+            }
+            SettingsFormRow(label: "扩散系数", subtitle: "水质模拟中的扩散倍率；.inp DIFFUSIVITY（偏好 + 打开文件时同步）") {
+                SettingsTextField(text: $diffusivityText)
+            }
+            sectionLabel("射流器")
+            SettingsFormRow(label: "射流器指数", subtitle: "射流器流量公式指数 (EMITTER_EXPONENT)") {
                 SettingsTextField(text: $emitExponText)
             }
-            SettingsFormRow(label: "水质容差", subtitle: "水质求解收敛容差 (QUAL_TOLERANCE)") {
-                SettingsTextField(text: $qualTolText)
-            }
-            paneNote("动力粘度修正系数和扩散系数需在 .inp 文件 [OPTIONS] 中直接设置（VISCOSITY / DIFFUSIVITY），引擎接口暂未开放运行时修改。")
+            paneNote("水质容差 QUAL_TOLERANCE 在「计算 → 水质参数」中编辑。部分选项仍依赖 .inp 或后续引擎 API。")
         }
+    }
+
+    @ViewBuilder
+    private func subFormRow<Content: View>(_ enabled: Bool, label: String, subtitle: String?, @ViewBuilder content: @escaping () -> Content) -> some View {
+        SettingsFormRow(label: label, subtitle: subtitle) { content() }
+            .padding(.leading, 16)
+            .background(Color.black.opacity(enabled ? 0 : 0.02))
+            .opacity(enabled ? 1 : 0.35)
+            .disabled(!enabled)
     }
 
     private func loadValues() {
@@ -410,24 +601,29 @@ private struct HydraulicContentView: View {
         do {
             accuracyText = formatDouble(try project.getOption(param: .accuracy))
             hydTolText = formatDouble(try project.getOption(param: .hydTol))
-            trialsText = "\(Int(try project.getOption(param: .trials)))"
+            trialsCount = min(200, max(10, Int(try project.getOption(param: .trials))))
             demandMultText = formatDouble(try project.getOption(param: .demandMult))
             minPressureText = formatDouble(try project.getOption(param: .minPressure))
             maxPressureText = formatDouble(try project.getOption(param: .maxPressure))
             pressExponText = formatDouble(try project.getOption(param: .pressExpon))
             emitExponText = formatDouble(try project.getOption(param: .emitExpon))
-            qualTolText = formatDouble(try project.getOption(param: .qualTol))
             message = nil; isError = false
         } catch {
             message = "读取水力参数失败: \(error)"; isError = true
         }
-        if let path = appState.filePath {
-            let hl = InpOptionsParser.parseHeadloss(path: path)
-            switch hl {
-            case "H-W": parsedHeadloss = "Hazen-Williams"
+        if let hints = appState.cachedInpOptionsHints {
+            let hl = hints.headloss?.uppercased()
+            headlossCode = hl ?? "H-W"
+            switch headlossCode {
             case "D-W": parsedHeadloss = "Darcy-Weisbach"
             case "C-M": parsedHeadloss = "Chezy-Manning"
-            default: parsedHeadloss = hl ?? "Hazen-Williams"
+            default: parsedHeadloss = "Hazen-Williams"; headlossCode = "H-W"
+            }
+            if let v = hints.viscosity {
+                viscosityText = formatDouble(v)
+            }
+            if let d = hints.diffusivity {
+                diffusivityText = formatDouble(d)
             }
         }
     }
@@ -436,26 +632,23 @@ private struct HydraulicContentView: View {
         guard let project = appState.project,
               let accuracy = Double(accuracyText),
               let hydTol = Double(hydTolText),
-              let trials = Int(trialsText),
               let demandMult = Double(demandMultText),
               let minP = Double(minPressureText),
               let maxP = Double(maxPressureText),
               let pressExp = Double(pressExponText),
-              let emitExp = Double(emitExponText),
-              let qualTol = Double(qualTolText) else {
+              let emitExp = Double(emitExponText) else {
             message = "保存失败: 请填写合法数字。"; isError = true
             return
         }
         appState.applyProjectMutation(sceneLabel: "更新水力参数") { _ in
             try project.setOption(param: .accuracy, value: accuracy)
             try project.setOption(param: .hydTol, value: hydTol)
-            try project.setOption(param: .trials, value: Double(trials))
+            try project.setOption(param: .trials, value: Double(trialsCount))
             try project.setOption(param: .demandMult, value: demandMult)
             try project.setOption(param: .minPressure, value: minP)
             try project.setOption(param: .maxPressure, value: maxP)
             try project.setOption(param: .pressExpon, value: pressExp)
             try project.setOption(param: .emitExpon, value: emitExp)
-            try project.setOption(param: .qualTol, value: qualTol)
         }
         if let err = appState.errorMessage, err.contains("更新水力参数失败") {
             message = err; isError = true
@@ -503,6 +696,14 @@ private struct SettingsSimulationPane: View {
     }
 }
 
+/// 计算参数时间输入单位（与引擎秒整数互转）
+private enum SimulationTimeUnit: String, CaseIterable, Identifiable {
+    case hour = "h"
+    case minute = "min"
+    case second = "sec"
+    var id: String { rawValue }
+}
+
 private struct SimulationContentView: View {
     @ObservedObject var appState: AppState
     let section: SimulationSection
@@ -519,6 +720,15 @@ private struct SimulationContentView: View {
     @State private var parsedQuality = "—"
     @State private var message: String?
     @State private var isError = false
+
+    /// 默认：总时长 → h；水质步长等步长 → min；报告/模式起始为固定 H:mm 输入（无单位菜单）
+    @AppStorage("settings.sim.unit.duration") private var unitDuration = SimulationTimeUnit.hour.rawValue
+    @AppStorage("settings.sim.unit.hydStep") private var unitHydStep = SimulationTimeUnit.minute.rawValue
+    /// 新键名：避免沿用旧版默认 h 的偏好；缺省为 min
+    @AppStorage("settings.sim.displayUnit.qualStep") private var unitQualStep = SimulationTimeUnit.minute.rawValue
+    @AppStorage("settings.sim.unit.reportStep") private var unitReportStep = SimulationTimeUnit.minute.rawValue
+    @AppStorage("settings.sim.unit.patternStep") private var unitPatternStep = SimulationTimeUnit.minute.rawValue
+    @AppStorage("settings.sim.unit.ruleStep") private var unitRuleStep = SimulationTimeUnit.minute.rawValue
 
     var body: some View {
         VStack(spacing: 0) {
@@ -559,34 +769,56 @@ private struct SimulationContentView: View {
     private var timeStepsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionLabel("模拟时长")
-            SettingsFormRow(label: "模拟总时长", subtitle: "TOTAL_DURATION，0 = 稳态") {
-                HStack(spacing: 6) { SettingsTextField(text: $durationH); unitTag("h") }
+            SettingsFormRow(label: "模拟总时长", subtitle: "TOTAL_DURATION，0 = 稳态；右侧可选 h / min / sec，存盘为秒") {
+                simulationParamValueRow(field: { SettingsTextField(text: $durationH) }) {
+                    simulationTimeUnitPicker(binding: $unitDuration)
+                }
             }
-            SettingsFormRow(label: "水力计算步长", subtitle: "HYD_STEP") {
-                HStack(spacing: 6) { SettingsTextField(text: $hydStepH); unitTag("h") }
+            SettingsFormRow(label: "水力计算步长", subtitle: "HYD_STEP；可选 h / min / sec") {
+                simulationParamValueRow(field: { SettingsTextField(text: $hydStepH) }) {
+                    simulationTimeUnitPicker(binding: $unitHydStep)
+                }
             }
-            SettingsFormRow(label: "水质计算步长", subtitle: "QUAL_STEP") {
-                HStack(spacing: 6) { SettingsTextField(text: $qualStepMin); unitTag("min") }
+            SettingsFormRow(label: "水质计算步长", subtitle: "QUAL_STEP；默认单位 min，右侧可改 h / min / sec") {
+                simulationParamValueRow(field: { SettingsTextField(text: $qualStepMin) }) {
+                    simulationTimeUnitPicker(binding: $unitQualStep)
+                }
             }
-            SettingsFormRow(label: "报告输出步长", subtitle: "REPORT_STEP") {
-                HStack(spacing: 6) { SettingsTextField(text: $reportStepH); unitTag("h") }
+            SettingsFormRow(label: "报告输出步长", subtitle: "REPORT_STEP；可选 h / min / sec") {
+                simulationParamValueRow(field: { SettingsTextField(text: $reportStepH) }) {
+                    simulationTimeUnitPicker(binding: $unitReportStep)
+                }
             }
-            SettingsFormRow(label: "报告起始时间", subtitle: "跳过初始预热期 (REPORT_START)") {
-                HStack(spacing: 6) { SettingsTextField(text: $reportStartH); unitTag("h") }
+            SettingsFormRow(label: "报告起始时间", subtitle: "REPORT_START，自模拟起算；时间格式 H:mm（默认 0:00），存盘为秒") {
+                simulationParamValueRow(trailingAlignment: .center, field: { SettingsTextField(text: $reportStartH) }) {
+                    simulationTrailingUnitTag("H:mm")
+                }
             }
 
             sectionLabel("模式与规则")
-            SettingsFormRow(label: "模式步长", subtitle: "PATTERN_STEP") {
-                HStack(spacing: 6) { SettingsTextField(text: $patternStepH); unitTag("h") }
+            SettingsFormRow(label: "模式步长", subtitle: "PATTERN_STEP；可选 h / min / sec") {
+                simulationParamValueRow(field: { SettingsTextField(text: $patternStepH) }) {
+                    simulationTimeUnitPicker(binding: $unitPatternStep)
+                }
             }
-            SettingsFormRow(label: "模式起始时间", subtitle: "PATTERN_START") {
-                HStack(spacing: 6) { SettingsTextField(text: $patternStartH); unitTag("h") }
+            SettingsFormRow(label: "模式起始时间", subtitle: "PATTERN_START，自模拟起算；时间格式 H:mm（默认 0:00），存盘为秒") {
+                simulationParamValueRow(trailingAlignment: .center, field: { SettingsTextField(text: $patternStartH) }) {
+                    simulationTrailingUnitTag("H:mm")
+                }
             }
-            SettingsFormRow(label: "规则步长", subtitle: "RULE_STEP") {
-                HStack(spacing: 6) { SettingsTextField(text: $ruleStepH); unitTag("h") }
+            SettingsFormRow(label: "规则步长", subtitle: "RULE_STEP；可选 h / min / sec") {
+                simulationParamValueRow(field: { SettingsTextField(text: $ruleStepH) }) {
+                    simulationTimeUnitPicker(binding: $unitRuleStep)
+                }
             }
             paneNote("当模拟总时长为 0 时为稳态模式（单次平衡计算），以上时间参数不生效。设为 > 0 的值启用时变扩展周期（EPS）模拟。")
         }
+        .onChange(of: unitDuration) { _ in loadValues() }
+        .onChange(of: unitHydStep) { _ in loadValues() }
+        .onChange(of: unitQualStep) { _ in loadValues() }
+        .onChange(of: unitReportStep) { _ in loadValues() }
+        .onChange(of: unitPatternStep) { _ in loadValues() }
+        .onChange(of: unitRuleStep) { _ in loadValues() }
     }
 
     private var qualitySection: some View {
@@ -603,7 +835,9 @@ private struct SimulationContentView: View {
                     .cornerRadius(6)
             }
             SettingsFormRow(label: "水质容差", subtitle: "QUAL_TOLERANCE") {
-                SettingsTextField(text: $qualTolText)
+                simulationParamValueRow(field: { SettingsTextField(text: $qualTolText) }) {
+                    Color.clear
+                }
             }
             paneNote("水质分析类型（无/氯消毒/水龄/示踪剂）需在 .inp 文件 [OPTIONS] 中直接设置 QUALITY 参数，引擎接口暂未开放运行时修改。总体衰减系数（BULK_COEFF）和管壁反应系数同理。")
         }
@@ -621,22 +855,22 @@ private struct SimulationContentView: View {
             let patStart = try project.getTimeParam(param: .patternStart)
             let rule = try project.getTimeParam(param: .ruleStep)
 
-            durationH = secToH(dur)
-            hydStepH = secToH(hyd)
-            qualStepMin = secToMin(qual)
-            reportStepH = secToH(rep)
-            reportStartH = secToH(repStart)
-            patternStepH = secToH(pat)
-            patternStartH = secToH(patStart)
-            ruleStepH = secToH(rule)
+            durationH = secToDisplay(dur, unit: SimulationTimeUnit(rawValue: unitDuration) ?? .hour)
+            hydStepH = secToDisplay(hyd, unit: SimulationTimeUnit(rawValue: unitHydStep) ?? .minute)
+            qualStepMin = secToDisplay(qual, unit: SimulationTimeUnit(rawValue: unitQualStep) ?? .minute)
+            reportStepH = secToDisplay(rep, unit: SimulationTimeUnit(rawValue: unitReportStep) ?? .minute)
+            reportStartH = secToElapsedHM(repStart)
+            patternStepH = secToDisplay(pat, unit: SimulationTimeUnit(rawValue: unitPatternStep) ?? .minute)
+            patternStartH = secToElapsedHM(patStart)
+            ruleStepH = secToDisplay(rule, unit: SimulationTimeUnit(rawValue: unitRuleStep) ?? .minute)
 
             qualTolText = formatDouble(try project.getOption(param: .qualTol))
             message = nil; isError = false
         } catch {
             message = "读取计算参数失败: \(error)"; isError = true
         }
-        if let path = appState.filePath {
-            let q = InpOptionsParser.parseQualityType(path: path)
+        if let hints = appState.cachedInpOptionsHints {
+            let q = hints.quality
             switch q {
             case "NONE", nil: parsedQuality = "无（仅水力）"
             case "CHEMICAL": parsedQuality = "化学物质"
@@ -651,14 +885,14 @@ private struct SimulationContentView: View {
         guard let project = appState.project else {
             message = "保存失败: 无项目。"; isError = true; return
         }
-        guard let durSec = hToSec(durationH),
-              let hydSec = hToSec(hydStepH),
-              let qualSec = minToSec(qualStepMin),
-              let repSec = hToSec(reportStepH),
-              let repStartSec = hToSec(reportStartH),
-              let patSec = hToSec(patternStepH),
-              let patStartSec = hToSec(patternStartH),
-              let ruleSec = hToSec(ruleStepH),
+        guard let durSec = displayToSec(durationH, unit: SimulationTimeUnit(rawValue: unitDuration) ?? .hour),
+              let hydSec = displayToSec(hydStepH, unit: SimulationTimeUnit(rawValue: unitHydStep) ?? .minute),
+              let qualSec = displayToSec(qualStepMin, unit: SimulationTimeUnit(rawValue: unitQualStep) ?? .minute),
+              let repSec = displayToSec(reportStepH, unit: SimulationTimeUnit(rawValue: unitReportStep) ?? .minute),
+              let repStartSec = elapsedHMToSec(reportStartH),
+              let patSec = displayToSec(patternStepH, unit: SimulationTimeUnit(rawValue: unitPatternStep) ?? .minute),
+              let patStartSec = elapsedHMToSec(patternStartH),
+              let ruleSec = displayToSec(ruleStepH, unit: SimulationTimeUnit(rawValue: unitRuleStep) ?? .minute),
               let qualTol = Double(qualTolText) else {
             message = "保存失败: 请填写合法数字。"; isError = true
             return
@@ -682,23 +916,98 @@ private struct SimulationContentView: View {
         }
     }
 
-    private func secToH(_ sec: Int) -> String {
-        let h = Double(sec) / 3600.0
-        if h == Double(Int(h)) { return "\(Int(h))" }
-        return String(format: "%.2f", h)
+    /// 计算参数：左 `SettingsTextField`（固定宽）+ 右等宽列（单位菜单 / H:mm），保证各行文本框与右侧对齐。
+    private func simulationParamValueRow<Field: View, Trail: View>(
+        trailingAlignment: Alignment = .trailing,
+        @ViewBuilder field: () -> Field,
+        @ViewBuilder trailing: () -> Trail
+    ) -> some View {
+        HStack(alignment: .center, spacing: 6) {
+            field()
+            trailing()
+                .frame(height: SettingsPixelLayout.simulationControlHeight)
+                .frame(width: SettingsPixelLayout.simulationTrailingWidth, alignment: trailingAlignment)
+        }
     }
-    private func secToMin(_ sec: Int) -> String {
-        let m = Double(sec) / 60.0
-        if m == Double(Int(m)) { return "\(Int(m))" }
-        return String(format: "%.2f", m)
+
+    @ViewBuilder
+    private func simulationTimeUnitPicker(binding: Binding<String>) -> some View {
+        Picker("", selection: binding) {
+            ForEach(SimulationTimeUnit.allCases) { u in
+                Text(u.rawValue).tag(u.rawValue)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
     }
-    private func hToSec(_ text: String) -> Int? {
-        guard let h = Double(text) else { return nil }
-        return Int(h * 3600)
+
+    /// 与单位列同尺寸（70×26 pt），样式同 `unitTag`，铺满列内以便与 Picker 对齐
+    private func simulationTrailingUnitTag(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundColor(DesignColors.lightText3)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 4)
+            .background(DesignColors.lightSurface2)
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(DesignColors.lightBorder, lineWidth: 1))
+            .cornerRadius(4)
     }
-    private func minToSec(_ text: String) -> Int? {
-        guard let m = Double(text) else { return nil }
-        return Int(m * 60)
+
+    private func secToDisplay(_ sec: Int, unit: SimulationTimeUnit) -> String {
+        switch unit {
+        case .hour:
+            let h = Double(sec) / 3600.0
+            if h == Double(Int(h)) { return "\(Int(h))" }
+            return String(format: "%.2f", h)
+        case .minute:
+            let m = Double(sec) / 60.0
+            if m == Double(Int(m)) { return "\(Int(m))" }
+            return String(format: "%.2f", m)
+        case .second:
+            return "\(sec)"
+        }
+    }
+
+    private func displayToSec(_ text: String, unit: SimulationTimeUnit) -> Int? {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        guard let v = Double(t) else { return nil }
+        switch unit {
+        case .hour: return Int((v * 3600.0).rounded())
+        case .minute: return Int((v * 60.0).rounded())
+        case .second: return Int(v.rounded())
+        }
+    }
+
+    /// 报告/模式起始：秒 → `H:mm`，整分为止；若有非零秒则 `H:mm:ss`（0 秒为 `0:00`）。
+    private func secToElapsedHM(_ sec: Int) -> String {
+        let s = max(0, sec)
+        let h = s / 3600
+        let m = (s % 3600) / 60
+        let r = s % 60
+        if r == 0 {
+            return "\(h):\(String(format: "%02d", m))"
+        }
+        return "\(h):\(String(format: "%02d", m)):\(String(format: "%02d", r))"
+    }
+
+    /// 解析 `H:mm` 或 `H:mm:ss`；无冒号时按整数秒（如 `0`）；非法返回 nil。
+    private func elapsedHMToSec(_ text: String) -> Int? {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        if t.isEmpty { return nil }
+        if !t.contains(":") {
+            return Int(t)
+        }
+        let parts = t.split(separator: ":").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count >= 2,
+              let hh = Int(parts[0]),
+              let mm = Int(parts[1]) else { return nil }
+        var total = hh * 3600 + mm * 60
+        if parts.count >= 3, let ss = Int(parts[2]) {
+            total += ss
+        }
+        return total
     }
 }
 
@@ -713,6 +1022,7 @@ private enum DisplaySection: String, CaseIterable {
 }
 
 private struct SettingsDisplayPane: View {
+    @EnvironmentObject private var appState: AppState
     @State private var section: DisplaySection = .colorSize
 
     var body: some View {
@@ -739,6 +1049,15 @@ private struct SettingsDisplayPane: View {
             )
             DisplayContentView(section: section)
         }
+        .onAppear { consumePendingDisplaySection() }
+        .onChange(of: appState.settingsPendingDisplaySection) { _ in consumePendingDisplaySection() }
+    }
+
+    private func consumePendingDisplaySection() {
+        guard let raw = appState.settingsPendingDisplaySection,
+              let s = DisplaySection(rawValue: raw) else { return }
+        section = s
+        appState.settingsPendingDisplaySection = nil
     }
 }
 
@@ -746,16 +1065,28 @@ private struct DisplayContentView: View {
     let section: DisplaySection
 
     @AppStorage("settings.display.nodeSize") private var nodeSize = 6
+    @AppStorage(DisplayCanvasNodeColor.junctionKey) private var nodeRGBJunction = DisplayCanvasNodeColor.defaultJunction
+    @AppStorage(DisplayCanvasNodeColor.reservoirKey) private var nodeRGBReservoir = DisplayCanvasNodeColor.defaultReservoir
+    @AppStorage(DisplayCanvasNodeColor.tankKey) private var nodeRGBTank = DisplayCanvasNodeColor.defaultTank
     @AppStorage("settings.display.lineWidth") private var lineWidth = 2
+    @AppStorage(DisplayCanvasLinkColor.pipeKey) private var linkRGBPipe = DisplayCanvasLinkColor.defaultPipe
+    @AppStorage(DisplayCanvasLinkColor.valveKey) private var linkRGBValve = DisplayCanvasLinkColor.defaultValve
+    @AppStorage(DisplayCanvasLinkColor.pumpKey) private var linkRGBPump = DisplayCanvasLinkColor.defaultPump
     @AppStorage("settings.display.proportionalWidth") private var proportionalWidth = false
     @AppStorage("settings.display.legendSegments") private var legendSegments = 5
     @AppStorage("settings.display.legendRangeAuto") private var legendRangeAuto = true
     @AppStorage("settings.display.legendScheme") private var legendScheme = 0
     @AppStorage("settings.display.labelFontSize") private var labelFontSize = 10
-    @AppStorage("settings.display.labelShowID") private var labelShowID = true
-    @AppStorage("settings.display.labelShowPressure") private var labelShowPressure = false
-    @AppStorage("settings.display.labelShowDemand") private var labelShowDemand = false
-    @AppStorage("settings.display.labelShowElevation") private var labelShowElevation = false
+    @AppStorage("settings.display.label.node.id") private var labelNodeShowId = true
+    @AppStorage("settings.display.label.node.elevation") private var labelNodeShowElevation = false
+    @AppStorage("settings.display.label.node.baseDemand") private var labelNodeShowBaseDemand = false
+    @AppStorage("settings.display.label.node.pressure") private var labelNodeShowPressure = false
+    @AppStorage("settings.display.label.node.head") private var labelNodeShowHead = false
+    @AppStorage("settings.display.label.link.id") private var labelLinkShowId = false
+    @AppStorage("settings.display.label.link.diameter") private var labelLinkShowDiameter = false
+    @AppStorage("settings.display.label.link.length") private var labelLinkShowLength = false
+    @AppStorage("settings.display.label.link.flow") private var labelLinkShowFlow = false
+    @AppStorage("settings.display.label.link.velocity") private var labelLinkShowVelocity = false
 
     private let legendSchemes = ["蓝 → 绿 → 黄 → 红", "灰度", "蓝 → 红", "绿 → 红"]
 
@@ -778,36 +1109,37 @@ private struct DisplayContentView: View {
         }
         .background(DesignColors.lightSurface)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { migrateLegacyDisplayLabelKeys() }
     }
 
     private var colorSizeSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionLabel("节点颜色（默认）")
-            SettingsFormRow(label: "节点默认颜色", subtitle: "Junction · Tank · Reservoir") {
-                HStack(spacing: 8) {
-                    colorDot("J", .blue)
-                    colorDot("T", .green)
-                    colorDot("R", .purple)
+            SettingsFormRow(label: "节点默认颜色", subtitle: "Junction · 水塔 · 水库；画布实时应用") {
+                HStack(spacing: 12) {
+                    displayNodeColorPickerChip("J", pack: $nodeRGBJunction)
+                    displayNodeColorPickerChip("T", pack: $nodeRGBTank)
+                    displayNodeColorPickerChip("R", pack: $nodeRGBReservoir)
                 }
             }
-            SettingsFormRow(label: "管段默认颜色", subtitle: "Pipe · Valve · Pump") {
-                HStack(spacing: 8) {
-                    colorDot("P", .gray)
-                    colorDot("V", .orange)
-                    colorDot("Pm", .red)
+            SettingsFormRow(label: "管段默认颜色", subtitle: "Pipe · Valve · Pump；画布实时应用") {
+                HStack(spacing: 12) {
+                    displayNodeColorPickerChip("P", pack: $linkRGBPipe)
+                    displayNodeColorPickerChip("V", pack: $linkRGBValve)
+                    displayNodeColorPickerChip("Pm", pack: $linkRGBPump)
                 }
             }
 
             sectionLabel("尺寸")
-            SettingsFormRow(label: "节点显示尺寸", subtitle: "画布像素，跟随缩放比例") {
+            SettingsFormRow(label: "节点尺寸", subtitle: "画布像素，跟随缩放比例；可点中间数字直接输入") {
                 HStack(spacing: 6) {
-                    stepperView(value: $nodeSize, range: 1...20)
+                    settingsIntStepperField(value: $nodeSize, range: 1...20)
                     unitTag("px")
                 }
             }
-            SettingsFormRow(label: "管段线宽", subtitle: nil) {
+            SettingsFormRow(label: "管段线宽", subtitle: "屏幕像素厚度（与节点尺寸语义一致），缩放地图时线宽不随放大变粗；同时影响点选容差；可点中间数字直接输入") {
                 HStack(spacing: 6) {
-                    stepperView(value: $lineWidth, range: 1...8)
+                    settingsIntStepperField(value: $lineWidth, range: 1...8)
                     unitTag("px")
                 }
             }
@@ -856,32 +1188,53 @@ private struct DisplayContentView: View {
                 }
             }
 
-            sectionLabel("标注内容（多选）")
-            SettingsFormRow(label: "显示 ID", subtitle: nil) {
-                Toggle("", isOn: $labelShowID).toggleStyle(.switch).labelsHidden()
+            sectionLabel("节点标注（多选，自上而下多行）")
+            SettingsFormRow(label: "节点 ID", subtitle: nil) {
+                Toggle("", isOn: $labelNodeShowId).toggleStyle(.switch).labelsHidden()
             }
-            SettingsFormRow(label: "显示压力", subtitle: nil) {
-                Toggle("", isOn: $labelShowPressure).toggleStyle(.switch).labelsHidden()
+            SettingsFormRow(label: "高程", subtitle: nil) {
+                Toggle("", isOn: $labelNodeShowElevation).toggleStyle(.switch).labelsHidden()
             }
-            SettingsFormRow(label: "显示需水量", subtitle: nil) {
-                Toggle("", isOn: $labelShowDemand).toggleStyle(.switch).labelsHidden()
+            SettingsFormRow(label: "基本需水量", subtitle: "基准需水，与属性面板一致") {
+                Toggle("", isOn: $labelNodeShowBaseDemand).toggleStyle(.switch).labelsHidden()
             }
-            SettingsFormRow(label: "显示高程", subtitle: nil) {
-                Toggle("", isOn: $labelShowElevation).toggleStyle(.switch).labelsHidden()
+            SettingsFormRow(label: "压力", subtitle: "计算后；无项目或未解算时显示 —") {
+                Toggle("", isOn: $labelNodeShowPressure).toggleStyle(.switch).labelsHidden()
             }
-            paneNote("标注仅在缩放 > 50% 时自动显示。")
+            SettingsFormRow(label: "总水头", subtitle: "计算后；无项目或未解算时显示 —") {
+                Toggle("", isOn: $labelNodeShowHead).toggleStyle(.switch).labelsHidden()
+            }
+
+            sectionLabel("管段标注（多选，同一行内以「 - 」连接）")
+            SettingsFormRow(label: "管段 ID", subtitle: nil) {
+                Toggle("", isOn: $labelLinkShowId).toggleStyle(.switch).labelsHidden()
+            }
+            SettingsFormRow(label: "管径", subtitle: nil) {
+                Toggle("", isOn: $labelLinkShowDiameter).toggleStyle(.switch).labelsHidden()
+            }
+            SettingsFormRow(label: "管长", subtitle: nil) {
+                Toggle("", isOn: $labelLinkShowLength).toggleStyle(.switch).labelsHidden()
+            }
+            SettingsFormRow(label: "流量", subtitle: "计算后") {
+                Toggle("", isOn: $labelLinkShowFlow).toggleStyle(.switch).labelsHidden()
+            }
+            SettingsFormRow(label: "流速", subtitle: "计算后") {
+                Toggle("", isOn: $labelLinkShowVelocity).toggleStyle(.switch).labelsHidden()
+            }
+            paneNote("标注仅在缩放 > 50% 时显示。超大模型在缩放不足时可能暂不绘管段/节点文字以保流畅。")
         }
     }
 
-    private func colorDot(_ label: String, _ color: Color) -> some View {
-        HStack(spacing: 4) {
-            Text(label)
+    private func displayNodeColorPickerChip(_ letter: String, pack: Binding<Int>) -> some View {
+        VStack(alignment: .center, spacing: 4) {
+            Text(letter)
                 .font(.system(size: 11))
                 .foregroundColor(DesignColors.lightText3)
-            RoundedRectangle(cornerRadius: 5)
-                .fill(color)
-                .frame(width: 22, height: 22)
-                .overlay(RoundedRectangle(cornerRadius: 5).stroke(DesignColors.lightBorder, lineWidth: 1))
+            ColorPicker("", selection: Binding(
+                get: { Color(srgbRGB24: pack.wrappedValue) },
+                set: { pack.wrappedValue = $0.toSRGBRGB24(fallback: pack.wrappedValue) }
+            ), supportsOpacity: false)
+            .labelsHidden()
         }
     }
 }
@@ -967,12 +1320,24 @@ private struct SettingsGeneralPane: View {
 
     private func resetAllSettings() {
         let keysToRemove = [
-            "settings.display.nodeSize", "settings.display.lineWidth",
+            "settings.display.nodeSize",
+            DisplayCanvasNodeColor.junctionKey,
+            DisplayCanvasNodeColor.reservoirKey,
+            DisplayCanvasNodeColor.tankKey,
+            DisplayCanvasLinkColor.pipeKey,
+            DisplayCanvasLinkColor.valveKey,
+            DisplayCanvasLinkColor.pumpKey,
+            "settings.display.lineWidth",
             "settings.display.proportionalWidth", "settings.display.legendSegments",
             "settings.display.legendRangeAuto", "settings.display.legendScheme",
-            "settings.display.labelFontSize", "settings.display.labelShowID",
-            "settings.display.labelShowPressure", "settings.display.labelShowDemand",
-            "settings.display.labelShowElevation",
+            "settings.display.labelFontSize",
+            "settings.display.labelsVisible",
+            "settings.display.label.node.id", "settings.display.label.node.elevation",
+            "settings.display.label.node.baseDemand", "settings.display.label.node.pressure", "settings.display.label.node.head",
+            "settings.display.label.link.id", "settings.display.label.link.diameter", "settings.display.label.link.length",
+            "settings.display.label.link.flow", "settings.display.label.link.velocity",
+            "settings.display.labelShowID", "settings.display.labelShowPressure",
+            "settings.display.labelShowDemand", "settings.display.labelShowElevation",
             "settings.general.theme", "settings.general.autoSave",
             "settings.general.autoSaveInterval", "settings.general.defaultTemplate",
             "settings.general.recentFileCount",
@@ -1156,13 +1521,47 @@ private struct SettingsTextField: View {
             .multilineTextAlignment(.trailing)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .frame(minWidth: 100, alignment: .trailing)
+            .frame(width: SettingsPixelLayout.fieldWidth, alignment: .trailing)
             .background(DesignColors.lightSurface)
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .stroke(DesignColors.lightBorder, lineWidth: 1)
             )
     }
+}
+
+/// 与 `.field` 同尺寸的只读展示（摩阻公式、解析结果等）
+@ViewBuilder
+private func settingsReadonlyValue(_ text: String) -> some View {
+    Text(text)
+        .font(.system(size: 13, design: .monospaced))
+        .foregroundColor(DesignColors.lightText2)
+        .multilineTextAlignment(.trailing)
+        .lineLimit(2)
+        .minimumScaleFactor(0.85)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .frame(width: SettingsPixelLayout.fieldWidth, alignment: .trailing)
+        .background(DesignColors.lightSurface)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(DesignColors.lightBorder, lineWidth: 1)
+        )
+}
+
+/// 从旧版 `labelShow*` 键迁移到 `settings.display.label.*`（仅当新键从未写入时）
+private func migrateLegacyDisplayLabelKeys() {
+    let d = UserDefaults.standard
+    func copyBool(_ newKey: String, legacyKey: String) {
+        guard d.object(forKey: newKey) == nil else { return }
+        if let v = d.object(forKey: legacyKey) as? Bool {
+            d.set(v, forKey: newKey)
+        }
+    }
+    copyBool("settings.display.label.node.id", legacyKey: "settings.display.labelShowID")
+    copyBool("settings.display.label.node.elevation", legacyKey: "settings.display.labelShowElevation")
+    copyBool("settings.display.label.node.baseDemand", legacyKey: "settings.display.labelShowDemand")
+    copyBool("settings.display.label.node.pressure", legacyKey: "settings.display.labelShowPressure")
 }
 
 private func stepperView(value: Binding<Int>, range: ClosedRange<Int>) -> some View {
@@ -1195,6 +1594,95 @@ private func stepperView(value: Binding<Int>, range: ClosedRange<Int>) -> some V
             .stroke(DesignColors.lightBorder, lineWidth: 1)
     )
     .clipShape(RoundedRectangle(cornerRadius: 6))
+}
+
+/// 带 ± 的整数步进，中间为可编辑 `TextField`（合法范围内即时写回；失焦/回车钳制到范围）
+private struct SettingsIntStepperField: View {
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    @State private var fieldText: String = ""
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button {
+                if value > range.lowerBound { value -= 1 }
+            } label: {
+                Text("−").frame(width: 26, height: 26)
+            }
+            .buttonStyle(.plain)
+            .background(DesignColors.lightSurface2)
+
+            Rectangle().fill(DesignColors.lightBorder).frame(width: 1, height: 26)
+
+            TextField("", text: $fieldText)
+                .multilineTextAlignment(.center)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(DesignColors.lightText)
+                .focused($fieldFocused)
+                .frame(minWidth: 44, maxWidth: 72)
+                .frame(height: 26)
+                .background(DesignColors.lightSurface)
+                #if os(iOS)
+                .keyboardType(.numberPad)
+                #endif
+
+            Rectangle().fill(DesignColors.lightBorder).frame(width: 1, height: 26)
+
+            Button {
+                if value < range.upperBound { value += 1 }
+            } label: {
+                Text("+").frame(width: 26, height: 26)
+            }
+            .buttonStyle(.plain)
+            .background(DesignColors.lightSurface2)
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(DesignColors.lightBorder, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .onAppear {
+            fieldText = "\(value)"
+        }
+        .onChange(of: value) { newVal in
+            if !fieldFocused {
+                fieldText = "\(newVal)"
+            }
+        }
+        .onChange(of: fieldText) { newText in
+            let t = newText.trimmingCharacters(in: .whitespaces)
+            guard let v = Int(t), range.contains(v) else { return }
+            if v != value {
+                value = v
+            }
+        }
+        .onSubmit {
+            commitClamp()
+        }
+        .onChange(of: fieldFocused) { focused in
+            if !focused {
+                commitClamp()
+            }
+        }
+    }
+
+    private func commitClamp() {
+        let t = fieldText.trimmingCharacters(in: .whitespaces)
+        if t.isEmpty {
+            fieldText = "\(value)"
+            return
+        }
+        if let v = Int(t) {
+            value = min(max(v, range.lowerBound), range.upperBound)
+        }
+        fieldText = "\(value)"
+    }
+}
+
+private func settingsIntStepperField(value: Binding<Int>, range: ClosedRange<Int>) -> some View {
+    SettingsIntStepperField(value: value, range: range)
 }
 
 private func settingsBottomBar<Content: View>(@ViewBuilder content: () -> Content) -> some View {

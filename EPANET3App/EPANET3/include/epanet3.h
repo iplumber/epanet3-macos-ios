@@ -221,6 +221,11 @@ int        EN_createLink(char *, int, int, int, EN_Project);
 int        EN_deleteNode(char *, EN_Project);
 int        EN_deleteLink(char *, EN_Project);
 
+/// Sets the Noria app version string written after [TITLE] as `exported by noria (version)`.
+int        EN_setNoriaExportVersion(const char *version, EN_Project);
+/// Sets default INP float precision (also updates Options output precision). Pass NULL or "" or "DEFAULT" for default; otherwise section name e.g. "JUNCTIONS" (case-insensitive).
+int        EN_setInpWriterSectionFractionDigits(const char *section, int digits, EN_Project);
+
 //==================================================================================
 /*        TO BE ADDED
 int       EN_getPatternIndex(char *, int *, EN_Project);

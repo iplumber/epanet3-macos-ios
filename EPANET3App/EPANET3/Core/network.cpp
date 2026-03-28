@@ -21,6 +21,7 @@
 #include "Models/leakagemodel.h"
 #include "Models/qualmodel.h"
 #include "Utilities/mempool.h"
+#include "Utilities/utilities.h"
 
 using namespace std;
 
@@ -61,6 +62,18 @@ Network::~Network()
 
 //-----------------------------------------------------------------------------
 
+int Network::fracDigitsForSection(const std::string& sec) const
+{
+    string key = Utilities::upperCase(sec);
+    auto it = inpWriterFracBySection.find(key);
+    int d = (it != inpWriterFracBySection.end()) ? it->second : inpWriterFracDefault;
+    if ( d < 0 ) d = 0;
+    if ( d > 15 ) d = 15;
+    return d;
+}
+
+//-----------------------------------------------------------------------------
+
 void Network::clear()
 {
     // ... destroy all network elements
@@ -75,6 +88,10 @@ void Network::clear()
     curves.clear();
     for (Control* control : controls) control->~Control();
     controls.clear();
+
+    inpWriterFracBySection.clear();
+    noriaExportVersion.clear();
+    inpWriterFracDefault = 4;
 
     // ... reclaim all memory allocated by the memory pool
 

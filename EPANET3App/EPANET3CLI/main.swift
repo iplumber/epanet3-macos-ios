@@ -52,9 +52,35 @@ if args.count >= 3 && args[1] == "--self-check-errors" {
     }
 }
 
+/// Load .inp, save via ProjectWriter (EPANET 2–style [OPTIONS]), then run — verifies Save As round-trip.
+if args.count >= 3 && args[1] == "--round-trip-save-run" {
+    let inpPath = args[2]
+    guard FileManager.default.fileExists(atPath: inpPath) else {
+        print("Error: Input file not found: \(inpPath)")
+        exit(1)
+    }
+    let savedName = "epanet3_roundtrip_\(UUID().uuidString).inp"
+    let savedPath = FileManager.default.temporaryDirectory.appendingPathComponent(savedName).path
+    let rptPath = FileManager.default.temporaryDirectory.appendingPathComponent("epanet3_roundtrip_rpt.txt").path
+    let outPath = FileManager.default.temporaryDirectory.appendingPathComponent("epanet3_roundtrip_out.bin").path
+    do {
+        let project = EpanetProject()
+        try project.load(path: inpPath)
+        try project.save(path: savedPath)
+        print("Round-trip save: \(savedPath)")
+        try runEpanet(inpPath: savedPath, rptPath: rptPath, outPath: outPath)
+        print("Round-trip run completed successfully (same path EPANET 3 uses after Save As).")
+        exit(0)
+    } catch {
+        print("Round-trip failed: \(error)")
+        exit(1)
+    }
+}
+
 guard args.count >= 2 else {
     print("Usage: EPANET3CLI <inp_path> [rpt_path] [out_path]")
     print("   or: EPANET3CLI --self-check-errors <inp_path>")
+    print("   or: EPANET3CLI --round-trip-save-run <inp_path>")
     exit(1)
 }
 
@@ -89,10 +115,11 @@ do {
 
     try project.initSolver(initFlows: false)
     var t: Int32 = 0
+    var dt: Int32 = 0
     var stepCount = 0
     repeat {
         try project.runSolver(time: &t)
-        var dt: Int32 = 0
+        dt = 0
         try project.advanceSolver(dt: &dt)
         stepCount += 1
         if stepCount <= 3 || dt == 0 {
@@ -100,7 +127,7 @@ do {
         } else if stepCount == 4 {
             print("  ...")
         }
-    } while t > 0
+    } while dt > 0
 
     // Sample a node and link
     if nodeCount > 0 {

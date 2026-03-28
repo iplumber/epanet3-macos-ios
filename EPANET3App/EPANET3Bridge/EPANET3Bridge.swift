@@ -127,6 +127,12 @@ func _EN_deleteNode(_ id: UnsafePointer<CChar>?, _ p: UnsafeMutableRawPointer?) 
 @_silgen_name("EN_deleteLink")
 func _EN_deleteLink(_ id: UnsafePointer<CChar>?, _ p: UnsafeMutableRawPointer?) -> Int32
 
+@_silgen_name("EN_setNoriaExportVersion")
+func _EN_setNoriaExportVersion(_ version: UnsafePointer<CChar>?, _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_setInpWriterSectionFractionDigits")
+func _EN_setInpWriterSectionFractionDigits(_ section: UnsafePointer<CChar>?, _ digits: Int32, _ p: UnsafeMutableRawPointer?) -> Int32
+
 // MARK: - Enums (matching epanet3.h)
 
 public enum NodeParams: Int32 {
@@ -234,6 +240,27 @@ public final class EpanetProject {
         guard let h = handle else { throw EpanetError.projectNotCreated }
         let err = path.withCString { _EN_saveProject($0, h) }
         if err != 0 { throw EpanetError.apiError(err) }
+    }
+
+    /// Sets Noria export footer (`exported by noria (version)`) and per-section / default INP float precision before `save(path:)`.
+    public func configureNoriaInpExport(version: String, sectionFractionDigits: [String: Int], defaultFractionDigits: Int) throws {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        try throwIfError(
+            version.withCString { _EN_setNoriaExportVersion($0, h) },
+            api: "EN_setNoriaExportVersion"
+        )
+        let def = min(max(defaultFractionDigits, 0), 15)
+        try throwIfError(
+            _EN_setInpWriterSectionFractionDigits(nil, Int32(def), h),
+            api: "EN_setInpWriterSectionFractionDigits"
+        )
+        for (sec, digits) in sectionFractionDigits {
+            let d = min(max(digits, 0), 15)
+            try throwIfError(
+                sec.withCString { _EN_setInpWriterSectionFractionDigits($0, Int32(d), h) },
+                api: "EN_setInpWriterSectionFractionDigits"
+            )
+        }
     }
 
     public func initSolver(initFlows: Bool = false) throws {

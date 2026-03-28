@@ -112,6 +112,13 @@ class Network
     LeakageModel*            leakageModel;  //!< pipe leakage model
     QualModel*               qualModel;     //!< water quality model
 
+    /// INP 写出：与读入文件解析一致的小数位；未出现在映射中的段使用 inpWriterFracDefault
+    std::unordered_map<std::string, int> inpWriterFracBySection;
+    int                                  inpWriterFracDefault = 4;
+    std::string                          noriaExportVersion;
+
+    int fracDigitsForSection(const std::string& sec) const;
+
   private:
 
     // Hash tables that associate an element's ID name with its storage index.

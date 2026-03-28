@@ -106,7 +106,8 @@ namespace Epanet
     {
         try
         {
-            if ( networkEmpty ) return 0;
+            // networkEmpty 仅在 load() 后置 false；通过 EN_createNode/EN_createLink 建的模型仍为 true，须按实际元素判断，否则会“保存成功”却不写文件。
+            if ( network.count(Element::NODE) == 0 && network.count(Element::LINK) == 0 ) return 0;
             ProjectWriter projectWriter;
             projectWriter.writeFile(fname, &network);
             return 0;
