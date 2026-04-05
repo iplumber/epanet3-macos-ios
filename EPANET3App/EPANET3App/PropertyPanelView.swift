@@ -405,7 +405,7 @@ private struct AddToolsSection: View {
                 TextField("终点节点 ID", text: $toNodeID).textFieldStyle(.roundedBorder)
                 TextField(units.length, text: $linkLength).textFieldStyle(.roundedBorder)
                 TextField(units.diameter, text: $linkDiameter).textFieldStyle(.roundedBorder)
-                TextField("糙率", text: $linkRoughness).textFieldStyle(.roundedBorder)
+                TextField("粗糙系数", text: $linkRoughness).textFieldStyle(.roundedBorder)
                 Button("新增管段") { addLink() }
                     .buttonStyle(.borderedProminent)
             }
@@ -609,6 +609,22 @@ private struct NodeBasicInfoSection: View {
         .onChange(of: baseDemandText) { _ in scheduleNodeFieldCommit() }
         .onChange(of: xCoordText) { _ in scheduleNodeFieldCommit() }
         .onChange(of: yCoordText) { _ in scheduleNodeFieldCommit() }
+        .onReceive(NotificationCenter.default.publisher(for: .epanetFlushPendingInspectorEditsBeforeSnapshot)) { _ in
+            flushPendingInspectorCommit()
+        }
+    }
+
+    /// 拓扑变更或撤销快照前立即提交，避免防抖导致引擎状态落后于界面。
+    /// 注意：强制提交，即使文本看起来相同（引擎可能已被外部修改）。
+    private func flushPendingInspectorCommit() {
+        nodeCommitTask?.cancel()
+        nodeCommitTask = nil
+        // 强制同步 committed 标记为当前文本，避免格式差异导致重复提交
+        committedElevationText = elevationText
+        committedBaseDemandText = baseDemandText
+        committedXCoordText = xCoordText
+        committedYCoordText = yCoordText
+        commitNodeFieldsIfNeeded(expectedNodeIndex: nodeIndex, force: true)
     }
 
     private func loadValues() {
@@ -641,18 +657,31 @@ private struct NodeBasicInfoSection: View {
         nodeCommitTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: PropertyInspectorAutosave.fieldCommitDebounceNs)
             guard !Task.isCancelled else { return }
-            commitNodeFieldsIfNeeded(expectedNodeIndex: capturedIndex)
+            commitNodeFieldsIfNeeded(expectedNodeIndex: capturedIndex, force: false)
         }
     }
 
-    private func commitNodeFieldsIfNeeded(expectedNodeIndex: Int) {
-        guard expectedNodeIndex == nodeIndex else { return }
-        guard !nodeID.isEmpty else { return }
+    private func commitNodeFieldsIfNeeded(expectedNodeIndex: Int, force: Bool = false) {
+        guard expectedNodeIndex == nodeIndex else {
+            if force {
+                print("[NodeInspector] Flush skipped: nodeIndex changed from \(expectedNodeIndex) to \(nodeIndex)")
+            }
+            return
+        }
+        guard !nodeID.isEmpty else {
+            if force {
+                print("[NodeInspector] Flush skipped: nodeID empty")
+            }
+            return
+        }
         let t = { (s: String) -> String in s.trimmingCharacters(in: .whitespacesAndNewlines) }
         guard let elevation = Double(t(elevationText)),
               let baseDemand = Double(t(baseDemandText)),
               let xCoord = Double(t(xCoordText)),
               let yCoord = Double(t(yCoordText)) else {
+            if force {
+                print("[NodeInspector] Flush skipped: parse failed")
+            }
             return
         }
         var changed: Set<InpNodePatchField> = []
@@ -660,7 +689,10 @@ private struct NodeBasicInfoSection: View {
         if baseDemandText != committedBaseDemandText { changed.insert(.baseDemand) }
         if xCoordText != committedXCoordText { changed.insert(.xCoord) }
         if yCoordText != committedYCoordText { changed.insert(.yCoord) }
-        guard !changed.isEmpty else { return }
+        guard !changed.isEmpty || force else { return }
+        if force && changed.isEmpty {
+            print("[NodeInspector] Flush forced commit even though no text change detected")
+        }
 
         appState.updateNodeCoreProperties(
             nodeID: nodeID,
@@ -726,7 +758,7 @@ private struct LinkBasicInfoSection: View {
             PropertyFieldRow(label: "节点", value: nodesText)
             PropertyFieldRow(label: units.length, value: $lengthText)
             PropertyFieldRow(label: units.diameter, value: $diameterText)
-            PropertyFieldRow(label: "糙率", value: $roughnessText)
+            PropertyFieldRow(label: "粗糙系数", value: $roughnessText)
 
             HStack(spacing: 8) {
                 Button("刷新") { loadValues() }
@@ -749,6 +781,21 @@ private struct LinkBasicInfoSection: View {
         .onChange(of: lengthText) { _ in scheduleLinkFieldCommit() }
         .onChange(of: diameterText) { _ in scheduleLinkFieldCommit() }
         .onChange(of: roughnessText) { _ in scheduleLinkFieldCommit() }
+        .onReceive(NotificationCenter.default.publisher(for: .epanetFlushPendingInspectorEditsBeforeSnapshot)) { _ in
+            flushPendingInspectorCommit()
+        }
+    }
+
+    /// 拓扑变更或撤销快照前立即提交（含水泵/阀门等借用的管段字段），避免防抖导致撤销栈顺序错乱。
+    /// 注意：强制提交，即使文本看起来相同（引擎可能已被外部修改）。
+    private func flushPendingInspectorCommit() {
+        linkCommitTask?.cancel()
+        linkCommitTask = nil
+        // 强制同步 committed 标记为当前文本，避免格式差异导致重复提交
+        committedLengthText = lengthText
+        committedDiameterText = diameterText
+        committedRoughnessText = roughnessText
+        commitLinkFieldsIfNeeded(expectedLinkIndex: linkIndex, force: true)
     }
 
     private func loadValues() {
@@ -782,17 +829,30 @@ private struct LinkBasicInfoSection: View {
         linkCommitTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: PropertyInspectorAutosave.fieldCommitDebounceNs)
             guard !Task.isCancelled else { return }
-            commitLinkFieldsIfNeeded(expectedLinkIndex: capturedIndex)
+            commitLinkFieldsIfNeeded(expectedLinkIndex: capturedIndex, force: false)
         }
     }
 
-    private func commitLinkFieldsIfNeeded(expectedLinkIndex: Int) {
-        guard expectedLinkIndex == linkIndex else { return }
-        guard !linkID.isEmpty else { return }
+    private func commitLinkFieldsIfNeeded(expectedLinkIndex: Int, force: Bool = false) {
+        guard expectedLinkIndex == linkIndex else {
+            if force {
+                print("[LinkInspector] Flush skipped: linkIndex changed from \(expectedLinkIndex) to \(linkIndex)")
+            }
+            return
+        }
+        guard !linkID.isEmpty else {
+            if force {
+                print("[LinkInspector] Flush skipped: linkID empty")
+            }
+            return
+        }
         let t = { (s: String) -> String in s.trimmingCharacters(in: .whitespacesAndNewlines) }
         guard let length = Double(t(lengthText)),
               let diameter = Double(t(diameterText)),
               let roughnessParsed = Double(t(roughnessText)) else {
+            if force {
+                print("[LinkInspector] Flush skipped: parse failed")
+            }
             return
         }
         let roughness: Double = useIntegerRoughnessHazenWilliams
@@ -802,7 +862,13 @@ private struct LinkBasicInfoSection: View {
         if lengthText != committedLengthText { changed.insert(.length) }
         if diameterText != committedDiameterText { changed.insert(.diameter) }
         if roughnessText != committedRoughnessText { changed.insert(.roughness) }
-        guard !changed.isEmpty else { return }
+        guard !changed.isEmpty || force else {
+            // force 模式下即使 changed 为空也尝试提交（防止引擎和 UI 不一致）
+            return
+        }
+        if force && changed.isEmpty {
+            print("[LinkInspector] Flush forced commit even though no text change detected")
+        }
 
         appState.updateLinkCoreProperties(
             linkID: linkID,

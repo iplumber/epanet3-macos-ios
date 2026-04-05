@@ -8,6 +8,11 @@ import UniformTypeIdentifiers
 import EPANET3Bridge
 import EPANET3Renderer
 
+extension Notification.Name {
+    /// 在写入撤销/重做快照前发送，使属性面板防抖中的编辑先提交到引擎，避免快照不含最新属性、撤销顺序错乱。
+    static let epanetFlushPendingInspectorEditsBeforeSnapshot = Notification.Name("epanetFlushPendingInspectorEditsBeforeSnapshot")
+}
+
 struct RecentFileItem: Codable, Identifiable, Equatable {
     var path: String
     var displayName: String
@@ -16,6 +21,14 @@ struct RecentFileItem: Codable, Identifiable, Equatable {
     var linkCount: Int?
 
     var id: String { path }
+}
+
+/// iOS：在弹出「未保存」提示后应执行的操作。
+public enum PendingUnsavedDocumentOperation: Equatable {
+    case closeDocument
+    case newFile
+    case openFilePicker
+    case loadPath(String)
 }
 
 /// 最近一次运行计算的结果，供界面与后续查询展示。
@@ -208,7 +221,8 @@ public final class AppState: ObservableObject {
     @Published private(set) var resultScalarRevision: UInt64 = 0
     @Published var project: EpanetProject?
     @Published var filePath: String?
-    @Published var errorMessage: String?
+    /// 宿主应用（如 Xcode 内 Mac target）需读取错误信息时要求 `public`。
+    @Published public var errorMessage: String?
     @Published var isLoading = false
     /// 最近一次运行计算的结果；nil 表示尚未运行或已清除。
     @Published var runResult: RunResult?
@@ -270,6 +284,13 @@ public final class AppState: ObservableObject {
     /// 启动页最近打开文件列表（按时间倒序）。
     @Published var recentFiles: [RecentFileItem] = []
 
+    /// 自上次成功保存或重新加载以来，是否存在尚未写入 .inp 的模型修改（关闭/新建/打开前用于提示）。
+    @Published public private(set) var hasUnsavedChanges = false
+    #if os(iOS)
+    /// iOS：有待处理的「未保存」操作时由界面弹出 `alert` 后再执行。
+    @Published var pendingUnsavedOperation: PendingUnsavedDocumentOperation?
+    #endif
+
     /// 编辑菜单「允许编辑管网拓扑」：关闭时禁止新增/删除命令与画布放置；新建/打开文件时默认关（不跨文档记忆）。
     @Published public var isTopologyEditingEnabled: Bool = false {
         didSet {
@@ -297,12 +318,23 @@ public final class AppState: ObservableObject {
         return true
     }
 
+    /// 是否已加载 EPANET 工程（供 Mac 宿主「显示」菜单等判断；不要求已保存路径）。
+    public var hasEpanetProject: Bool { project != nil }
+
     /// 当前画布绘制命令；nil 表示未在绘制流程中。
     @Published var activeCanvasPlacementTool: CanvasPlacementTool?
     /// 画布顶部提示，如「指定第二点…」。
     @Published var canvasPlacementStatusHint: String?
     /// 线类命令已选起点节点 ID（稳定，避免刷新后索引变化）。
     private var placementLinkFirstNodeID: String?
+
+    // MARK: - Undo / Redo（临时 .inp 完整快照）
+
+    @Published public private(set) var canUndo = false
+    @Published public private(set) var canRedo = false
+    private var undoSnapshotPaths: [String] = []
+    private var redoSnapshotPaths: [String] = []
+    private static let maxUndoSnapshotLevels = 50
 
     #if os(macOS)
     /// 打开设置窗口后若为非 nil，切换到对应顶层标签（与设置页 `SettingsToolbarTab.rawValue` 一致：0=单位…）；由 `SettingsView` 消费后清零。
@@ -321,20 +353,74 @@ public final class AppState: ObservableObject {
         // `SettingsToolbarTab.display`（units=0, hydraulic=1, simulation=2, display=3, general=4）
         openMacSettings(initialTab: 3)
     }
+    /// 「显示」菜单 / 侧栏打开的按类型对象表；nil 表示不展示独立窗口。
+    @Published public var objectTableSheetKind: ObjectTableKind?
+    public func openObjectTable(_ kind: ObjectTableKind) {
+        guard project != nil else { return }
+        objectTableSheetKind = kind
+        ObjectTableWindowController.shared.show(appState: self)
+    }
+    public func closeObjectTable() {
+        ObjectTableWindowController.shared.closeWindow()
+    }
+    /// 侧栏「模式 / 曲线」打开的 .inp 章节详情；nil 表示窗口关闭。
+    @Published public var inpSectionDetailKind: InpSectionDetailKind?
+    public func openInpSectionDetail(_ kind: InpSectionDetailKind) {
+        guard project != nil else { return }
+        inpSectionDetailKind = kind
+        InpSectionDetailWindowController.shared.show(appState: self)
+    }
+    public func closeInpSectionDetail() {
+        InpSectionDetailWindowController.shared.closeWindow()
+    }
     /// 当前文件的 security-scoped URL，用于保持读写权限。
     private var securityScopedFileURL: URL?
     /// 递增时由 `ContentView` 收起右侧属性面板（如新建空白画布后默认不展开）。
     @Published public var macDismissRightSidebarNonce: UInt64 = 0
+    #else
+    /// iOS：与 macOS 共享的 `ObjectTableKind` 入口占位（对象表仅在 Mac 上打开）。
+    public func openObjectTable(_ kind: ObjectTableKind) {}
     #endif
 
     /// 打开 .inp 时解码后的全文快照；用于「保存」时按原结构写回，避免 ProjectWriter 重写导致丢章节/改顺序。
     private var inpSourceSnapshot: String?
+
+    /// 供「模式 / 曲线」详情窗展示 .inp 原文；优先内存快照，否则读当前 `filePath`。
+    public func inpTextForSectionDetail() -> String? {
+        if let s = inpSourceSnapshot, !s.isEmpty { return s }
+        if let path = filePath, !path.isEmpty {
+            return try? InpFileTextReader.contentsOfFile(path: path)
+        }
+        return nil
+    }
     /// 属性面板等写入后待同步到 .inp 的字段级修改；文件菜单「保存」只应用这些补丁，不整文件重写数据行。
     private var inpPendingSaveDelta = InpSaveDelta()
 
     public init() {
         loadRecentFilesFromStorage()
     }
+
+    private func markDocumentEdited() {
+        hasUnsavedChanges = true
+    }
+
+    private func clearDocumentEdited() {
+        hasUnsavedChanges = false
+    }
+
+    #if os(macOS)
+    /// 返回：保存 / 不保存 / 取消（第三键）。
+    private func runUnsavedChangesAlertMac() -> NSApplication.ModalResponse {
+        let alert = NSAlert()
+        alert.messageText = "是否保存对文件的更改？"
+        alert.informativeText = "您有尚未保存到 .inp 的修改。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "不保存")
+        alert.addButton(withTitle: "取消")
+        return alert.runModal()
+    }
+    #endif
 
     /// 替换画布几何并 bump 版本，供 Metal 层判断何时重建顶点缓冲。
     func replaceRenderingScene(_ newValue: NetworkScene?) {
@@ -655,7 +741,7 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// C3：统一模型变更入口；执行变更后自动刷新 scene 并恢复选中。
+    /// C3：统一模型变更入口；执行变更后自动刷新 scene 并恢复选中。成功时写入撤销栈（变更前完整快照）。
     func applyProjectMutation(
         sceneLabel: String = "模型更新",
         mutation: (EpanetProject) throws -> Void
@@ -664,11 +750,24 @@ public final class AppState: ObservableObject {
             errorMessage = "\(sceneLabel)失败: EPANET 项目未创建"
             return
         }
+        let snapshotPath: String?
+        do {
+            snapshotPath = try saveProjectSnapshotToTemp()
+        } catch {
+            snapshotPath = nil
+        }
         do {
             try mutation(p)
             errorMessage = nil
+            if let path = snapshotPath {
+                appendUndoSnapshotAndClearRedo(path: path)
+            }
+            markDocumentEdited()
             refreshSceneFromProject(preserveSelection: true, sceneLabel: sceneLabel)
         } catch let error as EpanetError {
+            if let path = snapshotPath {
+                Self.deleteUndoSnapshotFile(at: path)
+            }
             errorMessage = Self.formatLocalizedEpanetError(error, scene: "\(sceneLabel)失败")
             let focus = Self.resolveErrorFocus(error, project: p)
             errorFocusNodeIndex = focus.nodeIndex
@@ -677,7 +776,170 @@ public final class AppState: ObservableObject {
                 setSelection(nodeIndex: focus.nodeIndex, linkIndex: focus.linkIndex, openPanel: true)
             }
         } catch {
+            if let path = snapshotPath {
+                Self.deleteUndoSnapshotFile(at: path)
+            }
             errorMessage = "\(sceneLabel)失败: \(error)"
+        }
+    }
+
+    private func saveProjectSnapshotToTemp() throws -> String {
+        NotificationCenter.default.post(name: .epanetFlushPendingInspectorEditsBeforeSnapshot, object: nil)
+        guard let p = project else {
+            throw NSError(domain: "AppState", code: 2, userInfo: [NSLocalizedDescriptionKey: "无工程"])
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("epanet-undo-\(UUID().uuidString).inp")
+        let path = url.path
+        // 与 writeProjectToPath 一致，避免快照与正式保存的 INP 格式差异导致撤销/重做时 load 报 ERRORS_IN_INPUT_DATA (200)。
+        let sectionDigits = inpSourceSnapshot.map { InpNumericFormat.maxFractionDigitsPerSection(content: $0) } ?? [:]
+        let defaultDigits = max(4, sectionDigits.values.max() ?? 0)
+        try p.configureNoriaInpExport(
+            version: NoriaAppInfo.marketingVersionString,
+            sectionFractionDigits: sectionDigits,
+            defaultFractionDigits: defaultDigits
+        )
+        try p.save(path: path)
+        // 空拓扑时 C++ 可能返回成功但不写出文件，或写出 0 字节；此类快照无法用于 load，不得入栈。
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw NSError(domain: "AppState", code: 3, userInfo: [NSLocalizedDescriptionKey: "撤销快照未生成文件"])
+        }
+        let attrs = try FileManager.default.attributesOfItem(atPath: path)
+        let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        guard size > 0 else {
+            Self.deleteUndoSnapshotFile(at: path)
+            throw NSError(domain: "AppState", code: 4, userInfo: [NSLocalizedDescriptionKey: "撤销快照为空"])
+        }
+        return path
+    }
+
+    private static func deleteUndoSnapshotFile(at path: String) {
+        try? FileManager.default.removeItem(atPath: path)
+    }
+
+    private func appendUndoSnapshotAndClearRedo(path: String) {
+        undoSnapshotPaths.append(path)
+        while undoSnapshotPaths.count > Self.maxUndoSnapshotLevels {
+            let dropped = undoSnapshotPaths.removeFirst()
+            Self.deleteUndoSnapshotFile(at: dropped)
+        }
+        for r in redoSnapshotPaths {
+            Self.deleteUndoSnapshotFile(at: r)
+        }
+        redoSnapshotPaths.removeAll()
+        syncUndoRedoPublishing()
+    }
+
+    private func syncUndoRedoPublishing() {
+        canUndo = !undoSnapshotPaths.isEmpty
+        canRedo = !redoSnapshotPaths.isEmpty
+    }
+
+    private func clearUndoRedoStacksAndDeleteFiles() {
+        for path in undoSnapshotPaths {
+            Self.deleteUndoSnapshotFile(at: path)
+        }
+        for path in redoSnapshotPaths {
+            Self.deleteUndoSnapshotFile(at: path)
+        }
+        undoSnapshotPaths.removeAll()
+        redoSnapshotPaths.removeAll()
+        syncUndoRedoPublishing()
+    }
+
+    /// 撤销最近一次通过 `applyProjectMutation` 提交的模型编辑。
+    public func undo() {
+        guard !undoSnapshotPaths.isEmpty, project != nil else { return }
+        let previousPath = undoSnapshotPaths.removeLast()
+        var redoPath: String?
+        do {
+            redoPath = try saveProjectSnapshotToTemp()
+        } catch {
+            undoSnapshotPaths.append(previousPath)
+            errorMessage = "撤销失败: 无法保存当前状态用于重做（\(error.localizedDescription)）"
+            syncUndoRedoPublishing()
+            return
+        }
+        do {
+            let fresh = EpanetProject()
+            try fresh.load(path: previousPath)
+            project = fresh
+            let snap = try? InpFileTextReader.contentsOfFile(path: previousPath)
+            Self.deleteUndoSnapshotFile(at: previousPath)
+            if let rp = redoPath {
+                redoSnapshotPaths.append(rp)
+            }
+            errorMessage = nil
+            invalidateInpSourceSnapshot()
+            inpSourceSnapshot = snap
+            syncCachedOptionsFromSnapshot()
+            markDocumentEdited()
+            refreshSceneFromProject(preserveSelection: true, sceneLabel: "撤销")
+            syncUndoRedoPublishing()
+        } catch let error as EpanetError {
+            if let rp = redoPath {
+                Self.deleteUndoSnapshotFile(at: rp)
+            }
+            undoSnapshotPaths.append(previousPath)
+            errorMessage = Self.formatLocalizedEpanetError(error, scene: "撤销失败")
+            syncUndoRedoPublishing()
+        } catch {
+            if let rp = redoPath {
+                Self.deleteUndoSnapshotFile(at: rp)
+            }
+            undoSnapshotPaths.append(previousPath)
+            errorMessage = "撤销失败: \(error)"
+            syncUndoRedoPublishing()
+        }
+    }
+
+    /// 重做最近一次撤销。
+    public func redo() {
+        guard !redoSnapshotPaths.isEmpty, project != nil else { return }
+        let nextPath = redoSnapshotPaths.removeLast()
+        var undoPath: String?
+        do {
+            undoPath = try saveProjectSnapshotToTemp()
+        } catch {
+            redoSnapshotPaths.append(nextPath)
+            errorMessage = "重做失败: 无法保存当前状态用于撤销（\(error.localizedDescription)）"
+            syncUndoRedoPublishing()
+            return
+        }
+        do {
+            let fresh = EpanetProject()
+            try fresh.load(path: nextPath)
+            project = fresh
+            let snap = try? InpFileTextReader.contentsOfFile(path: nextPath)
+            Self.deleteUndoSnapshotFile(at: nextPath)
+            if let up = undoPath {
+                undoSnapshotPaths.append(up)
+                while undoSnapshotPaths.count > Self.maxUndoSnapshotLevels {
+                    let dropped = undoSnapshotPaths.removeFirst()
+                    Self.deleteUndoSnapshotFile(at: dropped)
+                }
+            }
+            errorMessage = nil
+            invalidateInpSourceSnapshot()
+            inpSourceSnapshot = snap
+            syncCachedOptionsFromSnapshot()
+            markDocumentEdited()
+            refreshSceneFromProject(preserveSelection: true, sceneLabel: "重做")
+            syncUndoRedoPublishing()
+        } catch let error as EpanetError {
+            if let up = undoPath {
+                Self.deleteUndoSnapshotFile(at: up)
+            }
+            redoSnapshotPaths.append(nextPath)
+            errorMessage = Self.formatLocalizedEpanetError(error, scene: "重做失败")
+            syncUndoRedoPublishing()
+        } catch {
+            if let up = undoPath {
+                Self.deleteUndoSnapshotFile(at: up)
+            }
+            redoSnapshotPaths.append(nextPath)
+            errorMessage = "重做失败: \(error)"
+            syncUndoRedoPublishing()
         }
     }
 
@@ -717,7 +979,7 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// D1：更新管段核心属性（首批：长度、管径、糙率）。`changedFields` 决定写引擎与待落盘 .inp 的字段子集。
+    /// D1：更新管段核心属性（首批：长度、管径、粗糙系数）。`changedFields` 决定写引擎与待落盘 .inp 的字段子集。
     func updateLinkCoreProperties(
         linkID: String,
         length: Double,
@@ -743,6 +1005,106 @@ public final class AppState: ObservableObject {
         if errorMessage == nil {
             inpPendingSaveDelta.record(linkID: linkID, fields: changedFields)
         }
+    }
+
+    /// 对象表：提交节点单元格（X/Y、junction 基础需水量）。
+    func commitObjectTableNodeCell(row: NodeTableRow, columnId: String, text: String) {
+        let segs = columnId.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
+        guard segs.count == 2, segs[0] == "node", let raw = Int(segs[1]), let col = NodeWideColumn(rawValue: raw) else { return }
+        guard let p = project else { return }
+        let nodeIndex = row.index
+        let nodeID = row.nodeId
+
+        func readElevation() -> Double { (try? p.getNodeValue(nodeIndex: nodeIndex, param: .elevation)) ?? 0 }
+        func readBaseDemand() -> Double { (try? p.getNodeValue(nodeIndex: nodeIndex, param: .basedemand)) ?? 0 }
+        func readX() -> Double { (try? p.getNodeValue(nodeIndex: nodeIndex, param: .xcoord)) ?? 0 }
+        func readY() -> Double { (try? p.getNodeValue(nodeIndex: nodeIndex, param: .ycoord)) ?? 0 }
+
+        switch col {
+        case .x:
+            guard let v = NumericDisplayFormat.parseDecimalInput(text) else { return }
+            let elev = readElevation()
+            let bd = readBaseDemand()
+            let x = readX()
+            let y = readY()
+            guard abs(v - x) > 1e-12 else { return }
+            updateNodeCoreProperties(
+                nodeID: nodeID,
+                elevation: elev,
+                baseDemand: bd,
+                xCoord: v,
+                yCoord: y,
+                changedFields: [.xCoord]
+            )
+        case .y:
+            guard let v = NumericDisplayFormat.parseDecimalInput(text) else { return }
+            let elev = readElevation()
+            let bd = readBaseDemand()
+            let x = readX()
+            let y = readY()
+            guard abs(v - y) > 1e-12 else { return }
+            updateNodeCoreProperties(
+                nodeID: nodeID,
+                elevation: elev,
+                baseDemand: bd,
+                xCoord: x,
+                yCoord: v,
+                changedFields: [.yCoord]
+            )
+        case .demand:
+            guard row.junctionBaseDemand != nil else { return }
+            guard let v = NumericDisplayFormat.parseDecimalInput(text) else { return }
+            let elev = readElevation()
+            let bd = readBaseDemand()
+            let x = readX()
+            let y = readY()
+            guard abs(v - bd) > 1e-12 else { return }
+            updateNodeCoreProperties(
+                nodeID: nodeID,
+                elevation: elev,
+                baseDemand: v,
+                xCoord: x,
+                yCoord: y,
+                changedFields: [.baseDemand]
+            )
+        default:
+            break
+        }
+    }
+
+    /// 对象表：提交管段单元格（长度、管径、粗糙系数；H-W 下粗糙度按整数与属性面板一致）。
+    func commitObjectTableLinkCell(row: LinkTableRow, columnId: String, text: String) {
+        let segs = columnId.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
+        guard segs.count == 2, segs[0] == "link", let raw = Int(segs[1]), let col = LinkWideColumn(rawValue: raw) else { return }
+        let hw = (cachedInpOptionsHints?.headloss?.uppercased() ?? "H-W") == "H-W"
+        var newLength = row.length
+        var newDiameter = row.diameter
+        var newRoughness = row.roughness
+        switch col {
+        case .length:
+            guard let v = NumericDisplayFormat.parseDecimalInput(text) else { return }
+            newLength = v
+        case .diameter:
+            guard let v = NumericDisplayFormat.parseDecimalInput(text) else { return }
+            newDiameter = v
+        case .roughness:
+            guard let v = NumericDisplayFormat.parseDecimalInput(text) else { return }
+            newRoughness = hw ? Double(Int(v.rounded())) : v
+        default:
+            return
+        }
+        var changed: Set<InpLinkPatchField> = []
+        if abs(newLength - row.length) > 1e-9 { changed.insert(.length) }
+        if abs(newDiameter - row.diameter) > 1e-9 { changed.insert(.diameter) }
+        if abs(newRoughness - row.roughness) > 1e-9 { changed.insert(.roughness) }
+        guard !changed.isEmpty else { return }
+        updateLinkCoreProperties(
+            linkID: row.linkId,
+            length: newLength,
+            diameter: newDiameter,
+            roughness: newRoughness,
+            changedFields: changed
+        )
     }
 
     /// D2：新增节点（Junction）并设置核心属性。
@@ -967,6 +1329,8 @@ public final class AppState: ObservableObject {
             return false
         }
         project = EpanetProject()
+        clearUndoRedoStacksAndDeleteFiles()
+        markDocumentEdited()
         return true
     }
 
@@ -1329,6 +1693,13 @@ public final class AppState: ObservableObject {
         case .apiError(let code):
             let detail = EpanetProject.describeError(code: code)
             return "\(scene): [\(code)] \(detail)"
+        case .apiErrorWithInputDetail(let code, let inputDetail):
+            let detail = EpanetProject.describeError(code: code)
+            let log = inputDetail.trimmingCharacters(in: .whitespacesAndNewlines)
+            if log.isEmpty {
+                return "\(scene): [\(code)] \(detail)"
+            }
+            return "\(scene): [\(code)] \(detail)\n\(log)"
         case .projectNotCreated:
             return "\(scene): EPANET 项目未创建"
         }
@@ -1358,6 +1729,33 @@ public final class AppState: ObservableObject {
 
     public func openFile() {
         #if os(macOS)
+        if hasUnsavedChanges {
+            switch runUnsavedChangesAlertMac() {
+            case .alertFirstButtonReturn:
+                saveFile()
+                if errorMessage != nil { return }
+                if hasUnsavedChanges { return }
+                presentMacOpenPanelAndLoad()
+            case .alertSecondButtonReturn:
+                presentMacOpenPanelAndLoad()
+            default:
+                break
+            }
+        } else {
+            presentMacOpenPanelAndLoad()
+        }
+        NSCursor.arrow.set()
+        #else
+        if hasUnsavedChanges {
+            pendingUnsavedOperation = .openFilePicker
+        } else {
+            showFileImporter = true
+        }
+        #endif
+    }
+
+    #if os(macOS)
+    private func presentMacOpenPanelAndLoad() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "inp") ?? .plainText]
         panel.allowsMultipleSelection = false
@@ -1370,15 +1768,23 @@ public final class AppState: ObservableObject {
             securityScopedFileURL = url
             load(path: url.path)
         }
-        NSCursor.arrow.set()
-        #else
-        showFileImporter = true
-        #endif
     }
+    #endif
 
     /// 从已选 URL 加载（iOS 在 fileImporter 回调中调用，需先 startAccessingSecurityScopedResource）
     public func openFileFromURL(_ url: URL) {
         load(path: url.path)
+    }
+
+    /// 从「近期打开」列表中移除记录（仅更新本地索引，**不删除**磁盘上的 .inp）。
+    public func removeRecentFilesFromList(paths: [String]) {
+        func canon(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let targets = Set(paths.map { canon($0) }.filter { !$0.isEmpty })
+        guard !targets.isEmpty else { return }
+        let before = recentFiles.count
+        recentFiles.removeAll { targets.contains(canon($0.path)) }
+        guard recentFiles.count != before else { return }
+        saveRecentFilesToStorage()
     }
 
     func openRecentFile(_ item: RecentFileItem) {
@@ -1398,7 +1804,29 @@ public final class AppState: ObservableObject {
             errorMessage = "文件不存在或已移动，已从近期打开中移除：\(name)"
             return
         }
-        load(path: cleanPath)
+        #if os(macOS)
+        if hasUnsavedChanges {
+            switch runUnsavedChangesAlertMac() {
+            case .alertFirstButtonReturn:
+                saveFile()
+                if errorMessage != nil { return }
+                if hasUnsavedChanges { return }
+                load(path: cleanPath)
+            case .alertSecondButtonReturn:
+                load(path: cleanPath)
+            default:
+                break
+            }
+        } else {
+            load(path: cleanPath)
+        }
+        #else
+        if hasUnsavedChanges {
+            pendingUnsavedOperation = .loadPath(cleanPath)
+        } else {
+            load(path: cleanPath)
+        }
+        #endif
     }
 
     /// 新建：清空当前项目，回到空白状态。
@@ -1441,10 +1869,44 @@ public final class AppState: ObservableObject {
         isTopologyEditingEnabled = false
         lastLoadAndRenderElapsedSeconds = nil
         bumpCanvasViewportFitReset()
+        #if os(macOS)
+        objectTableSheetKind = nil
+        ObjectTableWindowController.shared.closeWindow()
+        inpSectionDetailKind = nil
+        InpSectionDetailWindowController.shared.closeWindow()
+        #endif
+        clearUndoRedoStacksAndDeleteFiles()
+        clearDocumentEdited()
     }
 
     /// 新建空白画布：先只建 `NetworkScene`（零节点零管段）；首次在画布上做拓扑编辑时会懒创建内存 `EpanetProject`。保存/计算仍需指定路径或另存为 .inp。
     public func newFile() {
+        #if os(macOS)
+        if hasUnsavedChanges {
+            switch runUnsavedChangesAlertMac() {
+            case .alertFirstButtonReturn:
+                saveFile()
+                if errorMessage != nil { return }
+                if hasUnsavedChanges { return }
+                performNewFile()
+            case .alertSecondButtonReturn:
+                performNewFile()
+            default:
+                break
+            }
+        } else {
+            performNewFile()
+        }
+        #else
+        if hasUnsavedChanges {
+            pendingUnsavedOperation = .newFile
+        } else {
+            performNewFile()
+        }
+        #endif
+    }
+
+    private func performNewFile() {
         #if os(macOS)
         stopSecurityScopedAccess()
         #endif
@@ -1486,7 +1948,13 @@ public final class AppState: ObservableObject {
         bumpCanvasViewportFitReset()
         #if os(macOS)
         macDismissRightSidebarNonce &+= 1
+        objectTableSheetKind = nil
+        ObjectTableWindowController.shared.closeWindow()
+        inpSectionDetailKind = nil
+        InpSectionDetailWindowController.shared.closeWindow()
         #endif
+        clearUndoRedoStacksAndDeleteFiles()
+        clearDocumentEdited()
     }
 
     /// 增删节点/管段或改写全局计算参数后，快照与磁盘结构不再一致，需退回完整重写或下次保存前重新加载。
@@ -1511,6 +1979,7 @@ public final class AppState: ObservableObject {
         inpSourceSnapshot = try? InpFileTextReader.contentsOfFile(path: path)
         inpPendingSaveDelta.clear()
         syncCachedOptionsFromSnapshot()
+        clearDocumentEdited()
     }
 
     private func syncCachedOptionsFromSnapshot() {
@@ -1576,10 +2045,59 @@ public final class AppState: ObservableObject {
         #endif
     }
 
-    /// 关闭：清空当前项目，回到空白状态。
+    /// 关闭：清空当前项目，回到空白状态；若有未保存修改则先提示。
     public func closeFile() {
-        newProject()
+        #if os(macOS)
+        if hasUnsavedChanges {
+            switch runUnsavedChangesAlertMac() {
+            case .alertFirstButtonReturn:
+                saveFile()
+                if errorMessage != nil { return }
+                if hasUnsavedChanges { return }
+                newProject()
+            case .alertSecondButtonReturn:
+                newProject()
+            default:
+                break
+            }
+        } else {
+            newProject()
+        }
+        #else
+        if hasUnsavedChanges {
+            pendingUnsavedOperation = .closeDocument
+        } else {
+            newProject()
+        }
+        #endif
     }
+
+    #if os(iOS)
+    /// iOS：用户在「未保存」对话框中选择保存 / 不保存 / 取消后调用。
+    public func resolvePendingUnsavedOperation(saveFirst: Bool) {
+        guard let op = pendingUnsavedOperation else { return }
+        if saveFirst {
+            saveFile()
+            if errorMessage != nil { return }
+            if hasUnsavedChanges { return }
+        }
+        pendingUnsavedOperation = nil
+        switch op {
+        case .closeDocument:
+            newProject()
+        case .newFile:
+            performNewFile()
+        case .openFilePicker:
+            showFileImporter = true
+        case .loadPath(let path):
+            load(path: path)
+        }
+    }
+
+    public func cancelPendingUnsavedOperation() {
+        pendingUnsavedOperation = nil
+    }
+    #endif
 
     func load(path: String) {
         isLoading = true
@@ -1608,6 +2126,7 @@ public final class AppState: ObservableObject {
                 let flowUnits = inpSnapshot.flatMap { InpOptionsParser.parseFlowUnits(content: $0) }
                     ?? InpOptionsParser.parseFlowUnits(path: pathCopy)
                 await MainActor.run { [weak self] in
+                    self?.clearUndoRedoStacksAndDeleteFiles()
                     self?.project = proj
                     self?.filePath = pathCopy
                     self?.errorMessage = nil
@@ -1644,8 +2163,9 @@ public final class AppState: ObservableObject {
                     self?.canvasPlacementStatusHint = nil
                     self?.isTopologyEditingEnabled = false
                     self?.bumpCanvasViewportFitReset()
+                    self?.clearDocumentEdited()
                 }
-            } catch EpanetError.apiError(200) {
+            } catch let loadErr as EpanetError where loadErr.code == 200 {
                 do {
                     let scene: NetworkScene
                     let contentForOptions: String?
@@ -1661,6 +2181,7 @@ public final class AppState: ObservableObject {
                     let dispFlow = contentForOptions.flatMap { InpOptionsParser.parseFlowUnits(content: $0) }
                         ?? InpOptionsParser.parseFlowUnits(path: pathCopy)
                     await MainActor.run { [weak self] in
+                        self?.clearUndoRedoStacksAndDeleteFiles()
                         self?.project = nil
                         self?.replaceRenderingScene(scene)
                         self?.filePath = pathCopy
@@ -1696,6 +2217,7 @@ public final class AppState: ObservableObject {
                         self?.canvasPlacementStatusHint = nil
                         self?.isTopologyEditingEnabled = false
                         self?.bumpCanvasViewportFitReset()
+                        self?.clearDocumentEdited()
                     }
                 } catch {
                     await MainActor.run { [weak self] in
@@ -1779,12 +2301,14 @@ public final class AppState: ObservableObject {
                 let hydStepSec = max(1, (try? proj.getTimeParam(param: .hydStep)) ?? 3600)
                 let collectedTS: TimeSeriesResultStore? = tsStore.stepCount > 0 ? tsStore : nil
                 await MainActor.run { [weak self] in
+                    self?.clearUndoRedoStacksAndDeleteFiles()
                     self?.project = proj
                     self?.timeSeriesResults = collectedTS
                     let snap = try? InpFileTextReader.contentsOfFile(path: inpPath)
                     self?.inpSourceSnapshot = snap
                     self?.cachedInpOptionsHints = snap.map { InpOptionsParser.parseOptionsHints(content: $0) }
                     self?.inpPendingSaveDelta.clear()
+                    self?.clearDocumentEdited()
                     self?.selectedNodeID = previousSelection.0
                     self?.selectedLinkID = previousSelection.1
                     self?.isPropertyPanelVisible = previousSelection.2
@@ -1997,41 +2521,53 @@ public final class AppState: ObservableObject {
         let nodeCount = try proj.nodeCount()
         let linkCount = try proj.linkCount()
 
-        var nodes: [NodeVertex] = []
+        // 画布展示坐标：引擎未设置 COORD 时 x,y 会落在哨兵值以下。占位仅用于 NetworkScene，不写回 EPANET；
+        // 用按索引错开的网格避免多点叠在同一点、管线端点与节点圆错位。
+        let invalidCoordThreshold = -1e19
+        var displayX = [Float](repeating: 0, count: max(0, nodeCount))
+        var displayY = [Float](repeating: 0, count: max(0, nodeCount))
         for i in 0..<nodeCount {
             let (x, y) = try proj.getNodeCoords(nodeIndex: i)
-            if x > -1e19 && y > -1e19 {
-                let nt = try proj.getNodeType(index: i)
-                let kind: UInt8
-                switch nt {
-                case .junction: kind = 0
-                case .reservoir: kind = 1
-                case .tank: kind = 2
-                }
-                nodes.append(NodeVertex(x: Float(x), y: Float(y), nodeIndex: i, kind: kind))
+            if x > invalidCoordThreshold && y > invalidCoordThreshold {
+                displayX[i] = Float(x)
+                displayY[i] = Float(y)
+            } else {
+                let col = i % 10
+                let row = i / 10
+                let step: Float = 65
+                displayX[i] = Float(col) * step - 4.5 * step
+                displayY[i] = Float(row) * step
             }
+        }
+
+        var nodes: [NodeVertex] = []
+        for i in 0..<nodeCount {
+            let nt = try proj.getNodeType(index: i)
+            let kind: UInt8
+            switch nt {
+            case .junction: kind = 0
+            case .reservoir: kind = 1
+            case .tank: kind = 2
+            }
+            nodes.append(NodeVertex(x: displayX[i], y: displayY[i], nodeIndex: i, kind: kind))
         }
 
         var links: [LinkVertex] = []
         for i in 0..<linkCount {
             let (n1, n2) = try proj.getLinkNodes(linkIndex: i)
             guard n1 >= 0, n2 >= 0, n1 < nodeCount, n2 < nodeCount else { continue }
-            let (x1, y1) = try proj.getNodeCoords(nodeIndex: n1)
-            let (x2, y2) = try proj.getNodeCoords(nodeIndex: n2)
-            if x1 > -1e19, y1 > -1e19, x2 > -1e19, y2 > -1e19 {
-                let lt = try proj.getLinkType(index: i)
-                let kind: UInt8
-                switch lt {
-                case .pipe, .cvpipe: kind = 0
-                case .pump: kind = 1
-                default: kind = 2
-                }
-                links.append(LinkVertex(x1: Float(x1), y1: Float(y1), x2: Float(x2), y2: Float(y2), linkIndex: i, kind: kind))
+            let fx1 = displayX[n1]
+            let fy1 = displayY[n1]
+            let fx2 = displayX[n2]
+            let fy2 = displayY[n2]
+            let lt = try proj.getLinkType(index: i)
+            let kind: UInt8
+            switch lt {
+            case .pipe, .cvpipe: kind = 0
+            case .pump: kind = 1
+            default: kind = 2
             }
-        }
-
-        if nodes.isEmpty && links.isEmpty {
-            throw EpanetError.apiError(-1)
+            links.append(LinkVertex(x1: fx1, y1: fy1, x2: fx2, y2: fy2, linkIndex: i, kind: kind))
         }
 
         if nodes.isEmpty {

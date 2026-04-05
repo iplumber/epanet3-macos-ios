@@ -20,12 +20,13 @@ using namespace std;
 //-----------------------------------------------------------------------------
 //  Keywords associated with link properties
 //-----------------------------------------------------------------------------
-static const char* w_Head    = "HEAD";
-static const char* w_Speed   = "SPEED";
-static const char* w_Power   = "POWER";
-static const char* w_Price   = "PRICE";
-static const char* w_Pattern = "PATTERN";
-static const char* w_Effic   = "EFFIC";
+static const char* w_Head      = "HEAD";
+static const char* w_Speed     = "SPEED";
+static const char* w_Power     = "POWER";
+static const char* w_Price     = "PRICE";
+static const char* w_Pattern   = "PATTERN";
+static const char* w_Effic     = "EFFIC";
+static const char* w_Diameter  = "DIAMETER";
 static const char* w_OPEN    = "OPEN";
 static const char* w_CLOSED  = "CLOSED";
 static const char* w_CV      = "CV";
@@ -348,6 +349,17 @@ void parsePumpData(Pump* pump, Network* nw, vector<string>& tokenList)
             if ( !pump->speedPattern )
             {
                 throw InputError(InputError::UNDEFINED_OBJECT, tokens[index]);
+            }
+        }
+
+        // ... diameter property (Link base class property, EPANET 3 extension)
+
+        else if (Utilities::match(keyword, w_Diameter))
+        {
+            if ( !Utilities::parseNumber(tokens[index], pump->diameter)
+                || pump->diameter <= 0.0 )
+            {
+                throw InputError(InputError::INVALID_NUMBER, tokens[index]);
             }
         }
 

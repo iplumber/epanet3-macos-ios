@@ -33,6 +33,8 @@ Pump::~Pump() {}
 void Pump::convertUnits(Network* nw)
 {
     pumpCurve.horsepower /= nw->ucf(Units::POWER);
+    // Diameter is a Link base class property; convert from user units to internal (ft).
+    diameter /= nw->ucf(Units::DIAMETER);
 }
 
 //-----------------------------------------------------------------------------

@@ -73,6 +73,23 @@ public struct ContentView: View {
     @AppStorage(DisplayCanvasLinkColor.valveKey) private var canvasLinkRGBValve = DisplayCanvasLinkColor.defaultValve
     /// 总开关：关闭时不绘画布标注、不显示左下角标注图例（各分项设置仍保留）。
     @AppStorage("settings.display.labelsVisible") private var canvasLabelsVisible = true
+    @AppStorage("settings.display.layer.junction") private var layerJunctionVisible = true
+    @AppStorage("settings.display.layer.reservoir") private var layerReservoirVisible = true
+    @AppStorage("settings.display.layer.tank") private var layerTankVisible = true
+    @AppStorage("settings.display.layer.pipe") private var layerPipeVisible = true
+    @AppStorage("settings.display.layer.pump") private var layerPumpVisible = true
+    @AppStorage("settings.display.layer.valve") private var layerValveVisible = true
+
+    private var canvasLayerVisibility: CanvasLayerVisibility {
+        CanvasLayerVisibility(
+            showJunction: layerJunctionVisible,
+            showReservoir: layerReservoirVisible,
+            showTank: layerTankVisible,
+            showPipe: layerPipeVisible,
+            showPump: layerPumpVisible,
+            showValve: layerValveVisible
+        )
+    }
 
     private var nodeRange: (Float, Float)? {
         guard !appState.nodePressureValues.isEmpty else { return nil }
@@ -296,8 +313,8 @@ public struct ContentView: View {
                     // 毛玻璃+淡色底整体不透明度：0.6 基础上再提高 20% → 0.72（符号仍由 Text 全不透明绘制）
                     .opacity(0.72)
                 }
-        }
-        .buttonStyle(.plain)
+                        }
+                        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -318,11 +335,11 @@ public struct ContentView: View {
                     .buttonStyle(.bordered)
                     .tint(appState.editorMode == .delete ? .accentColor : .gray)
                     .disabled(!appState.canEditTopologyOnCanvas || !appState.isTopologyEditingEnabled)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(AppColors.controlBackground)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(AppColors.controlBackground)
             #endif
         }
     }
@@ -367,6 +384,7 @@ public struct ContentView: View {
                     linkColorPipe: DisplayCanvasLinkColor.rgbFloats(packed: canvasLinkRGBPipe),
                     linkColorPump: DisplayCanvasLinkColor.rgbFloats(packed: canvasLinkRGBPump),
                     linkColorValve: DisplayCanvasLinkColor.rgbFloats(packed: canvasLinkRGBValve),
+                    layerVisibility: canvasLayerVisibility,
                     clearColor: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0),
                     onScrollWheel: { delta, viewPoint, viewSize in
                         let tb = squareFraming(for: scene)
@@ -503,10 +521,10 @@ public struct ContentView: View {
                 .onTapGesture(count: 2) {
                     resetCanvasToFitDefaultsAndSyncBoundsAnchor(scene: scene)
                     appState.clearSelection()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
 
             GeometryReader { _ in
                 CanvasMapLabelsOverlay(
@@ -516,6 +534,7 @@ public struct ContentView: View {
                     panX: panX,
                     panY: panY,
                     project: appState.project,
+                    layerVisibility: canvasLayerVisibility,
                     pressureSeries: appState.nodePressureValues.isEmpty ? nil : appState.nodePressureValues,
                     headSeries: appState.nodeHeadValues.isEmpty ? nil : appState.nodeHeadValues,
                     flowSeries: appState.linkFlowValues.isEmpty ? nil : appState.linkFlowValues,
@@ -610,8 +629,8 @@ public struct ContentView: View {
             if showRightPanel {
                 PropertyPanelView(appState: appState, selectedNodeIndex: appState.selectedNodeIndex, selectedLinkIndex: appState.selectedLinkIndex, onClose: {
                     appState.clearSelection()
-                })
-                .frame(width: 260)
+                        })
+                        .frame(width: 260)
                 .frame(maxHeight: .infinity, alignment: .top)
             }
         }
@@ -663,7 +682,7 @@ public struct ContentView: View {
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
             .help("上下拖拽调整绘图区高度")
-            .gesture(
+                    .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { g in
                         if bottomChartPanelDragStartHeight == nil {
@@ -792,6 +811,18 @@ public struct ContentView: View {
             _ = url.startAccessingSecurityScopedResource()
             appState.openFileFromURL(url)
         }
+        #if os(iOS)
+        .alert("未保存的更改", isPresented: Binding(
+            get: { appState.pendingUnsavedOperation != nil },
+            set: { if !$0 { appState.cancelPendingUnsavedOperation() } }
+        )) {
+            Button("保存") { appState.resolvePendingUnsavedOperation(saveFirst: true) }
+            Button("不保存", role: .destructive) { appState.resolvePendingUnsavedOperation(saveFirst: false) }
+            Button("取消", role: .cancel) { appState.cancelPendingUnsavedOperation() }
+        } message: {
+            Text("您有尚未保存到 .inp 的修改。")
+        }
+        #endif
         .sheet(isPresented: $showRunResultSheet) {
             RunResultSheet(appState: appState)
                 #if os(macOS)
@@ -812,12 +843,30 @@ public struct ContentView: View {
     private var mainContent: some View {
         VStack(spacing: 0) {
             if let msg = appState.errorMessage {
-                HStack {
+                HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
-                    Text(msg)
-                        .foregroundColor(.secondary)
-                    Spacer()
+                    ScrollView {
+                        Text(msg)
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 220)
+                    Button {
+                        #if os(macOS)
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(msg, forType: .string)
+                        #elseif canImport(UIKit)
+                        UIPasteboard.general.string = msg
+                        #endif
+                    } label: {
+                        Label("复制", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("将完整错误信息复制到剪贴板")
                 }
                 .padding(8)
                 .background(Color.orange.opacity(0.1))
@@ -870,9 +919,9 @@ public struct ContentView: View {
                 )
                 #else
                 HStack(spacing: 12) {
-                    Button {
-                        showRunResultSheet = true
-                    } label: {
+                        Button {
+                            showRunResultSheet = true
+                        } label: {
                         HStack(spacing: 6) {
                             Circle()
                                 .fill(iosRunResultColor)
@@ -880,8 +929,8 @@ public struct ContentView: View {
                             Text(iosRunResultTitle)
                         }
                         .font(.caption.monospaced())
-                    }
-                    .buttonStyle(.plain)
+                        }
+                        .buttonStyle(.plain)
                     .help("读入/渲染与模型统计；已计算时含模拟时长与平差耗时")
                     Divider().frame(height: 12)
                     Text("X: \(mouseSceneX.map { String(format: "%.2f", $0) } ?? "—")")
@@ -979,6 +1028,8 @@ private struct StartupFileActionButtonStyle: ButtonStyle {
 
 private struct StartupSplitView: View {
     @ObservedObject var appState: AppState
+    @State private var isManagingRecentList = false
+    @State private var selectedRecentPaths: Set<String> = []
 
     private let columns = [
         GridItem(.adaptive(minimum: 210), spacing: 14)
@@ -1029,10 +1080,46 @@ private struct StartupSplitView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("近期打开")
-                    .font(.headline)
-                    .padding(.top, 16)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("近期打开")
+                        .font(.headline)
+                    Spacer(minLength: 8)
+                    if !appState.recentFiles.isEmpty {
+                        Button {
+                            if isManagingRecentList {
+                                selectedRecentPaths.removeAll()
+                            }
+                            isManagingRecentList.toggle()
+                        } label: {
+                            Text(isManagingRecentList ? "完成" : "选择…")
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .buttonStyle(.borderless)
+                        .help(isManagingRecentList ? "退出多选" : "选择多项并从列表中移除（不删除文件）")
+                    }
+                }
+                .padding(.top, 16)
+                .padding(.horizontal, 16)
+
+                if isManagingRecentList && !selectedRecentPaths.isEmpty {
+                    HStack(spacing: 12) {
+                        Text("已选 \(selectedRecentPaths.count) 项")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Button("从列表中移除") {
+                            appState.removeRecentFilesFromList(paths: Array(selectedRecentPaths))
+                            selectedRecentPaths.removeAll()
+                            if appState.recentFiles.isEmpty {
+                                isManagingRecentList = false
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .help("仅从「近期打开」中移除记录，不会删除磁盘上的文件")
+                    }
                     .padding(.horizontal, 16)
+                }
+
                 if appState.recentFiles.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "square.grid.2x2")
@@ -1047,12 +1134,45 @@ private struct StartupSplitView: View {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 14) {
                             ForEach(appState.recentFiles) { item in
-                                Button {
-                                    appState.openRecentFile(item)
-                                } label: {
-                                    RecentFileThumbnailCard(item: item)
+                                Group {
+                                    if isManagingRecentList {
+                                        Button {
+                                            if selectedRecentPaths.contains(item.id) {
+                                                selectedRecentPaths.remove(item.id)
+                                            } else {
+                                                selectedRecentPaths.insert(item.id)
+                                            }
+                                        } label: {
+                                            ZStack(alignment: .topLeading) {
+                                                RecentFileThumbnailCard(item: item)
+                                                Image(systemName: selectedRecentPaths.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                                                    .symbolRenderingMode(.hierarchical)
+                                                    .foregroundStyle(.primary, Color.accentColor)
+                                                    .font(.title3)
+                                                    .padding(8)
+                                                    .shadow(color: .black.opacity(0.12), radius: 1, y: 1)
+                                            }
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel(
+                                            selectedRecentPaths.contains(item.id)
+                                                ? "已选，\(item.displayName)"
+                                                : "未选，\(item.displayName)"
+                                        )
+                                    } else {
+                                        Button {
+                                            appState.openRecentFile(item)
+                                        } label: {
+                                            RecentFileThumbnailCard(item: item)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .contextMenu {
+                                            Button("从最近列表中移除", systemImage: "xmark.circle") {
+                                                appState.removeRecentFilesFromList(paths: [item.path])
+                                            }
+                                        }
+                                    }
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
                         .padding(.horizontal, 16)
@@ -1123,6 +1243,7 @@ private struct RecentFileThumbnailCard: View {
         )
     }
 }
+
 #endif
 
 private struct NetworkTypeSummary {
@@ -1135,6 +1256,13 @@ private struct NetworkTypeSummary {
 
     var nodeTotal: Int { junctions + tanks + reservoirs }
     var linkTotal: Int { pipes + valves + pumps }
+}
+
+/// .inp 中无画布几何的对象：模式 / 曲线 / 简单控制的数量（与引擎 `EN_getCount` 一致）。
+private struct InpInvisibleObjectCounts {
+    var patterns: Int = 0
+    var curves: Int = 0
+    var controls: Int = 0
 }
 
 // MARK: - Result time-series chart panel
@@ -2404,28 +2532,41 @@ private struct MacDesignToolbar: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            // MARK: Undo/Redo 快捷按钮
             HStack(spacing: 2) {
-                toolButton("arrow.up.left.and.down.right.and.arrow.up.right.and.down.left", active: appState.editorMode == .browse) {
-                    appState.setEditorMode(.browse)
+                Button {
+                    appState.undo()
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 30, height: 26)
+                        .foregroundColor(appState.canUndo ? .primary : .secondary.opacity(0.4))
+                        .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
-                toolButton("plus.circle.fill", active: appState.editorMode == .add, tint: .blue) {
-                    appState.setEditorMode(.add)
+                .buttonStyle(.plain)
+                .disabled(!appState.canUndo)
+                .help("撤销 (Undo)")
+
+                Button {
+                    appState.redo()
+                } label: {
+                    Image(systemName: "arrow.uturn.forward")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 30, height: 26)
+                        .foregroundColor(appState.canRedo ? .primary : .secondary.opacity(0.4))
+                        .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
-                .disabled(!appState.canEditTopologyOnCanvas || !appState.isTopologyEditingEnabled)
-                toolButton("trash.fill", active: appState.editorMode == .delete, tint: .orange) {
-                    appState.setEditorMode(.delete)
-                }
-                .disabled(!appState.canEditTopologyOnCanvas || !appState.isTopologyEditingEnabled)
+                .buttonStyle(.plain)
+                .disabled(!appState.canRedo)
+                .help("重做 (Redo)")
             }
-            .padding(2)
-            .background(Color(NSColor(calibratedWhite: 0.93, alpha: 1)), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.25), lineWidth: 1))
 
             if appState.isTopologyEditingEnabled {
                 Divider().frame(height: 24)
                 HStack(spacing: 4) {
                     ForEach(CanvasPlacementTool.allCases, id: \.self) { tool in
                         let active = appState.activeCanvasPlacementTool == tool
+                        let help = topologyToolbarHelp(for: tool)
                         Button {
                             if appState.activeCanvasPlacementTool == tool {
                                 _ = appState.cancelCanvasPlacementIfActive()
@@ -2441,7 +2582,7 @@ private struct MacDesignToolbar: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(!appState.canEditTopologyOnCanvas)
-                        .help(topologyToolbarHelp(for: tool))
+                        .help(help)
                     }
                     Divider().frame(height: 22)
                     Button {
@@ -2461,41 +2602,32 @@ private struct MacDesignToolbar: View {
 
             Divider().frame(height: 24)
 
-            Button {
-                appState.clearSelection()
-            } label: {
-                Image(systemName: "arrow.uturn.backward")
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-
-            Button {
-                appState.requestFocusOnSelection()
-            } label: {
-                Image(systemName: "scope")
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .disabled(appState.selectedNodeIndex == nil && appState.selectedLinkIndex == nil)
-
-            Divider().frame(height: 24)
-
-            Picker("结果上图", selection: Binding(
+            Picker(selection: Binding(
                 get: { appState.resultOverlayMode },
                 set: { appState.setResultOverlayMode($0) }
             )) {
                 Text("图例").tag(ResultOverlayMode.none)
                 Text("压力").tag(ResultOverlayMode.pressure)
                 Text("流量").tag(ResultOverlayMode.flow)
+            } label: {
+                EmptyView()
             }
             .pickerStyle(.segmented)
             .frame(width: 220)
             .disabled(!documentReady)
             .help(documentReady ? "结果上色模式" : "需先打开或保存为含 EPANET 模型的 .inp 后使用")
 
-            Button("标注") {}
-                .buttonStyle(.plain)
-                .foregroundColor(.secondary)
+            Button {
+                appState.openMacSettingsDisplayLabelSection()
+            } label: {
+                Image(systemName: "textformat")
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 28, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.secondary)
+            .help("标注设置")
 
             Spacer()
 
@@ -2542,22 +2674,18 @@ private struct MacDesignToolbar: View {
         }
     }
 
-    private func toolButton(_ icon: String, active: Bool, tint: Color = .primary, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 30, height: 26)
-                .foregroundColor(active ? tint : .secondary)
-                .background(active ? tint.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
-                // `.plain` 默认常以字形为命中区；整格圆角矩形均可点。
-                .contentShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
-    }
 }
 
 private struct MacDesignSidebar: View {
     @ObservedObject var appState: AppState
+    @AppStorage("settings.display.layer.junction") private var layerJunction = true
+    @AppStorage("settings.display.layer.reservoir") private var layerReservoir = true
+    @AppStorage("settings.display.layer.tank") private var layerTank = true
+    @AppStorage("settings.display.layer.pipe") private var layerPipe = true
+    @AppStorage("settings.display.layer.pump") private var layerPump = true
+    @AppStorage("settings.display.layer.valve") private var layerValve = true
+
+    private var documentReady: Bool { appState.project != nil }
 
     private var counts: NetworkTypeSummary {
         guard let p = appState.project else { return NetworkTypeSummary() }
@@ -2585,6 +2713,19 @@ private struct MacDesignSidebar: View {
         return summary
     }
 
+    private var invisibleCounts: InpInvisibleObjectCounts {
+        guard let p = appState.project else { return InpInvisibleObjectCounts() }
+        do {
+            return InpInvisibleObjectCounts(
+                patterns: try p.patternCount(),
+                curves: try p.curveCount(),
+                controls: try p.controlCount()
+            )
+        } catch {
+            return InpInvisibleObjectCounts()
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("图层")
@@ -2595,14 +2736,93 @@ private struct MacDesignSidebar: View {
                 .padding(.top, 10)
                 .padding(.bottom, 6)
 
-            MacTreeRow(title: "节点", count: counts.nodeTotal, icon: "circle.fill", tint: .blue, isActive: true)
-            MacTreeRow(title: "Junction", count: counts.junctions, icon: "circle.fill", tint: .blue, depth: 1)
-            MacTreeRow(title: "水塔", count: counts.tanks, icon: "", tint: .green, depth: 1, tankNotchedSquare: true)
-            MacTreeRow(title: "水库", count: counts.reservoirs, icon: "", tint: .purple, depth: 1, reservoirTrapezoid: true)
-            MacTreeRow(title: "管段", count: counts.linkTotal, icon: "line.diagonal", tint: .gray)
-            MacTreeRow(title: "Pipe", count: counts.pipes, icon: "line.diagonal", tint: .gray, depth: 1)
-            MacTreeRow(title: "Valve", count: counts.valves, icon: "", tint: .orange, depth: 1, valveBowtie: true)
-            MacTreeRow(title: "Pump", count: counts.pumps, icon: "", tint: .red, depth: 1, pumpHollowCircleTriangle: true)
+            // 单层列表：节点类与管段类不分组；管段类顺序为 阀门 → 管段 → 水泵
+            if counts.junctions > 0 {
+                MacTreeRow(
+                    title: "节点", count: counts.junctions, icon: "circle.fill", tint: .blue, layerToggle: $layerJunction,
+                    layerTableKind: .junction, canOpenObjectTable: documentReady,
+                    onOpenObjectTable: { appState.openObjectTable($0) }
+                )
+            }
+            if counts.tanks > 0 {
+                MacTreeRow(
+                    title: "水塔", count: counts.tanks, icon: "", tint: .green, layerToggle: $layerTank, tankNotchedSquare: true,
+                    layerTableKind: .tank, canOpenObjectTable: documentReady,
+                    onOpenObjectTable: { appState.openObjectTable($0) }
+                )
+            }
+            if counts.reservoirs > 0 {
+                MacTreeRow(
+                    title: "水库", count: counts.reservoirs, icon: "", tint: .purple, layerToggle: $layerReservoir, reservoirTrapezoid: true,
+                    layerTableKind: .reservoir, canOpenObjectTable: documentReady,
+                    onOpenObjectTable: { appState.openObjectTable($0) }
+                )
+            }
+            if counts.valves > 0 {
+                MacTreeRow(
+                    title: "阀门", count: counts.valves, icon: "", tint: .orange, layerToggle: $layerValve, valveBowtie: true,
+                    layerTableKind: .valve, canOpenObjectTable: documentReady,
+                    onOpenObjectTable: { appState.openObjectTable($0) }
+                )
+            }
+            if counts.pipes > 0 {
+                MacTreeRow(
+                    title: "管段", count: counts.pipes, icon: "line.diagonal", tint: .gray, layerToggle: $layerPipe,
+                    layerTableKind: .pipe, canOpenObjectTable: documentReady,
+                    onOpenObjectTable: { appState.openObjectTable($0) }
+                )
+            }
+            if counts.pumps > 0 {
+                MacTreeRow(
+                    title: "水泵", count: counts.pumps, icon: "", tint: .red, layerToggle: $layerPump, pumpHollowCircleTriangle: true,
+                    layerTableKind: .pump, canOpenObjectTable: documentReady,
+                    onOpenObjectTable: { appState.openObjectTable($0) }
+                )
+            }
+
+            if documentReady {
+                Text("不可见对象")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .textCase(.uppercase)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
+
+                MacTreeRow(
+                    title: "模式",
+                    count: invisibleCounts.patterns,
+                    icon: "waveform.path",
+                    tint: .secondary,
+                    layerToggle: nil,
+                    layerTableKind: nil,
+                    canOpenObjectTable: false,
+                    onOpenObjectTable: nil,
+                    onTapRow: documentReady ? { appState.openInpSectionDetail(.patterns) } : nil
+                )
+                MacTreeRow(
+                    title: "曲线",
+                    count: invisibleCounts.curves,
+                    icon: "chart.xyaxis.line",
+                    tint: .secondary,
+                    layerToggle: nil,
+                    layerTableKind: nil,
+                    canOpenObjectTable: false,
+                    onOpenObjectTable: nil,
+                    onTapRow: documentReady ? { appState.openInpSectionDetail(.curves) } : nil
+                )
+                MacTreeRow(
+                    title: "控制",
+                    count: invisibleCounts.controls,
+                    icon: "slider.horizontal.3",
+                    tint: .secondary,
+                    layerToggle: nil,
+                    layerTableKind: nil,
+                    canOpenObjectTable: false,
+                    onOpenObjectTable: nil,
+                    onTapRow: documentReady ? { appState.openInpSectionDetail(.controls) } : nil
+                )
+            }
 
             Divider().padding(.vertical, 8)
 
@@ -2787,6 +3007,8 @@ private struct MacTreeRow: View {
     let tint: Color
     var isActive: Bool = false
     var depth: Int = 0
+    /// 非 nil 时在行尾显示开关，用于图层显示/隐藏（与 `CanvasLayerVisibility` 同步）。
+    var layerToggle: Binding<Bool>? = nil
     /// 为 true 时用紫色等腰梯形代替 SF Symbol（`icon` 忽略）。
     var reservoirTrapezoid: Bool = false
     /// 为 true 时用底角双凹正方形代替 SF Symbol（`icon` 忽略），与画布水塔一致。
@@ -2795,9 +3017,35 @@ private struct MacTreeRow: View {
     var valveBowtie: Bool = false
     /// 为 true 时用圆环 + 空心等边三角代替 SF Symbol（`icon` 忽略），表示水泵图例。
     var pumpHollowCircleTriangle: Bool = false
+    /// 非 nil 时点击行尾数字（左键）打开对应类型的对象表。
+    var layerTableKind: ObjectTableKind? = nil
+    var canOpenObjectTable: Bool = false
+    var onOpenObjectTable: ((ObjectTableKind) -> Void)? = nil
+    /// 非 nil 时整行可点（如侧栏「模式 / 曲线」打开 .inp 章节详情）。
+    var onTapRow: (() -> Void)? = nil
+
+    /// 与开关同宽占位，使无开关的父行数字列与有开关行对齐。
+    private static let layerToggleColumnWidth: CGFloat = 20
+    /// 固定数字列宽，避免位数变化时推动开关列导致各行勾/横线不齐。
+    private static let layerCountColumnWidth: CGFloat = 44
 
     var body: some View {
-        HStack(spacing: 8) {
+        Group {
+            if let tap = onTapRow {
+                Button(action: tap) {
+                    rowCore
+                }
+                .buttonStyle(.plain)
+                .help("点击查看 .inp 章节详情")
+                .contentShape(Rectangle())
+            } else {
+                rowCore
+            }
+        }
+    }
+
+    private var rowCore: some View {
+        HStack(alignment: .center, spacing: 8) {
             Group {
                 if reservoirTrapezoid {
                     SidebarReservoirTrapezoidShape()
@@ -2822,14 +3070,61 @@ private struct MacTreeRow: View {
             .frame(width: 14, height: 12)
             Text(title)
                 .font(.system(size: 13))
-            Spacer()
-            Text(verbatim: String(count))
-                .font(.system(.caption, design: .monospaced))
-                .foregroundColor(.secondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            HStack(alignment: .center, spacing: 6) {
+                if let toggle = layerToggle {
+                    Button {
+                        toggle.wrappedValue.toggle()
+                    } label: {
+                        ZStack {
+                            Image(systemName: toggle.wrappedValue ? "checkmark" : "minus")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(toggle.wrappedValue ? .primary : .secondary.opacity(0.8))
+                        }
+                        .frame(width: Self.layerToggleColumnWidth, height: Self.layerToggleColumnWidth)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(toggle.wrappedValue ? "点击隐藏该类型" : "点击显示该类型")
+                    .accessibilityLabel("图层显示")
+                    .accessibilityValue(toggle.wrappedValue ? "开" : "关")
+                } else {
+                    Color.clear
+                        .frame(width: Self.layerToggleColumnWidth, height: Self.layerToggleColumnWidth)
+                }
+                Group {
+                    if let k = layerTableKind {
+                        Button {
+                            guard canOpenObjectTable else { return }
+                            onOpenObjectTable?(k)
+                        } label: {
+                            Text(verbatim: String(count))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!canOpenObjectTable)
+                        .help(canOpenObjectTable ? "点击查看此类对象表格" : "请先打开工程")
+                        .accessibilityLabel("数量 \(count)，打开表格")
+                    } else {
+                        Text(verbatim: String(count))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(width: Self.layerCountColumnWidth, alignment: .trailing)
+            }
         }
         .padding(.leading, CGFloat(12 + depth * 14))
         .padding(.trailing, 12)
-        .frame(height: 24)
+        .frame(minHeight: 24)
         .background(isActive ? Color.blue.opacity(0.08) : .clear)
     }
 }
@@ -3084,7 +3379,7 @@ private struct RunResultSheet: View {
                 Button("关闭") { dismiss() }
             }
             .padding(.bottom, 8)
-            #endif
+                    #endif
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -3138,7 +3433,7 @@ private struct RunResultSheet: View {
                             Text("最近一次运行计算")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundColor(.secondary)
-                            switch result {
+                switch result {
                             case .success(let hydElapsed):
                                 if let d = appState.lastCompletedSimulationDurationSeconds, d > 0 {
                                     LabeledContent("模拟总时长") { Text(Self.formatSecondsHuman(d)) }
@@ -3156,22 +3451,22 @@ private struct RunResultSheet: View {
                                     .foregroundColor(.secondary)
                             case .failure(let message):
                                 LabeledContent("状态") { Text("失败").foregroundColor(.red) }
-                                Text(message)
-                                    .font(.system(.body, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                    } else {
-                        Text("尚未运行计算；上表为当前已加载模型信息。")
-                            .font(.caption)
+                        Text(message)
+                            .font(.system(.body, design: .monospaced))
                             .foregroundColor(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                        Text("尚未运行计算；上表为当前已加载模型信息。")
+                            .font(.caption)
+                    .foregroundColor(.secondary)
             }
-            .padding(20)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(20)
         }
         .frame(minWidth: 400, minHeight: 280)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

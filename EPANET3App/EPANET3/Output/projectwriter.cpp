@@ -113,10 +113,11 @@ int ProjectWriter::writeFile(const char* fname, Network* nw)
     writeQuality();
     writeSources();
     writeReactions();
-    writeMixing();
+    // Second pass reads file in order; [OPTIONS] must appear before [MIXING] so options apply before tank mixing lines (avoids input error 200 on reload).
     writeTimes();
     writeReport();
     writeOptions();
+    writeMixing();
     writeCoords();
     writeAuxData();
     fout << "\n[END]\n";
@@ -277,27 +278,46 @@ void ProjectWriter::writePumps()
             fout << left << setw(16) << link->fromNode->name << '\t';
             fout << left << setw(16) << link->toNode->name << '\t';
 
-            if ( pump->pumpCurve.horsepower > 0.0 && pump->pumpCurve.curve == nullptr )
+            // Diameter is a Link base class property; write it so it can be restored on load.
+            // Using DIAMETER keyword to match the keyword-value pattern of PUMPS section.
+            fout << '\t' << setw(8) << "DIAMETER";
+            writeInpIntOrTwoFrac(fout, 12, link->diameter * network->ucf(Units::DIAMETER));
+
+            const bool hasHeadCurve = pump->pumpCurve.curve != nullptr;
+            const bool hasConstHpPower =
+                pump->pumpCurve.horsepower > 0.0 && !hasHeadCurve;
+
+            if ( hasConstHpPower )
             {
-                fout << setw(8) << "POWER";
+                fout << '\t' << setw(8) << "POWER";
                 writeInpIntOrTwoFrac(fout, 12, pump->pumpCurve.horsepower * network->ucf(Units::POWER));
             }
 
-            if ( pump->pumpCurve.curve != nullptr )
+            if ( hasHeadCurve )
             {
-                fout << setw(8) << "HEAD";
+                fout << '\t' << setw(8) << "HEAD" << '\t';
                 fout << setw(16) << pump->pumpCurve.curve->name;
+            }
+
+            // LinkParser::parseLinkData requires at least 4 tokens per link line; a pump with only
+            // ID and end nodes fails with INPUT ERROR 202. DIAMETER is always written above,
+            // so we have at least 4 tokens. Emit a minimal constant-HP pump if neither HEAD
+            // nor POWER was written (e.g. new pump not yet configured).
+            if ( !hasConstHpPower && !hasHeadCurve )
+            {
+                fout << '\t' << setw(8) << "POWER";
+                writeInpIntOrTwoFrac(fout, 12, 1.0);
             }
 
             if ( pump->speed > 0.0 && pump->speed != 1.0 )
             {
-                fout << setw(8) << "SPEED";
+                fout << '\t' << setw(8) << "SPEED";
                 writeInpIntOrTwoFrac(fout, 8, pump->speed);
             }
 
             if ( pump->speedPattern )
             {
-                fout << setw(8) << "PATTERN";
+                fout << '\t' << setw(8) << "PATTERN" << '\t';
                 fout << setw(16) << pump->speedPattern->name;
             }
             fout << '\t' << ";\n";
@@ -328,9 +348,22 @@ void ProjectWriter::writeValves()
             }
             else
             {
-                double cf = link->initSetting /
-                            link->convertSetting(network, link->initSetting);
-                writeInpIntOrTwoFrac(fout, 12, cf * link->initSetting);
+                // initSetting is stored in internal units. The ratio recovers user units for INP.
+                // When initSetting is 0, convertSetting(...) is 0 and cf = 0/0 -> NaN in the file (INPUT 206).
+                double internal = link->initSetting;
+                if ( !std::isfinite(internal) ) internal = 0.0;
+                double userSetting = 0.0;
+                if ( internal != 0.0 )
+                {
+                    double denom = link->convertSetting(network, internal);
+                    if ( std::isfinite(denom) && denom != 0.0 )
+                    {
+                        double cf = internal / denom;
+                        userSetting = cf * internal;
+                    }
+                }
+                if ( !std::isfinite(userSetting) ) userSetting = 0.0;
+                writeInpIntOrTwoFrac(fout, 12, userSetting);
                 fout << '\t' << ";\n";
             }
         }
