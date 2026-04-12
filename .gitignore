@@ -22,8 +22,8 @@ DerivedData/
 epanet  resource/epanet-dev-develop/build/
 epanet  resource/EPANET2.2-2.2.0/build/
 
-### EPANET 2.2 engine CLI (built locally next to SRC_engines; not part of SwiftPM)
-EPANET2.2-2.2.0/build/
+### EPANET 2.2 upstream tree at repo root (local reference only; do not commit)
+EPANET2.2-2.2.0/
 
 ### EPANET resources (keep local, only track selected inp files)
 epanet  resource/**
