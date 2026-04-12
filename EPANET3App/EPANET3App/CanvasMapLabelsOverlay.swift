@@ -139,6 +139,8 @@ struct CanvasMapLabelsOverlay: View {
     let panX: CGFloat
     let panY: CGFloat
     let project: EpanetProject?
+    /// 与侧栏图层开关一致：隐藏类型的节点/管段不绘文字标注。
+    let layerVisibility: CanvasLayerVisibility
     /// 与当前时间轴/结果快照一致时，用于压力/水头/流量/流速标注（非空且下标有效则优先于 `project` 实时读数）。
     let pressureSeries: [Float]?
     let headSeries: [Float]?
@@ -152,6 +154,7 @@ struct CanvasMapLabelsOverlay: View {
         panX: CGFloat,
         panY: CGFloat,
         project: EpanetProject?,
+        layerVisibility: CanvasLayerVisibility = .allVisible,
         pressureSeries: [Float]? = nil,
         headSeries: [Float]? = nil,
         flowSeries: [Float]? = nil,
@@ -163,6 +166,7 @@ struct CanvasMapLabelsOverlay: View {
         self.panX = panX
         self.panY = panY
         self.project = project
+        self.layerVisibility = layerVisibility
         self.pressureSeries = pressureSeries
         self.headSeries = headSeries
         self.flowSeries = flowSeries
@@ -206,13 +210,20 @@ struct CanvasMapLabelsOverlay: View {
                 viewSize: size
             )
             let span = max(transformBounds.maxX - transformBounds.minX, transformBounds.maxY - transformBounds.minY, 1)
-            let margin = span * 0.04
+            let globalMargin = span * 0.04
+            // 仅用全图 4% 作边距时，大模型下会把「视窗外很远」的节点也算进视窗，误判为 >500 而整屏不画标注。
+            // 与当前视窗尺度挂钩并上限为 globalMargin：放大后只统计真正靠近视窗的节点。
+            let vW = vis.maxX - vis.minX
+            let vH = vis.maxY - vis.minY
+            let vSpan = max(vW, vH, 1e-6)
+            let clipMargin = min(globalMargin, max(vSpan * 0.12, 1e-6))
 
-            // 视窗内（与标注裁剪同一 margin）节点数过多：整屏不画标注，避免万级管网仍刷屏 + 省掉候选收集
+            // 视窗附近（clipMargin）节点数过多：整屏不画标注，避免万级管网仍刷屏 + 省掉候选收集
             var visibleNodeCount = 0
             for n in scene.nodes {
-                if n.x >= vis.minX - margin, n.x <= vis.maxX + margin,
-                   n.y >= vis.minY - margin, n.y <= vis.maxY + margin {
+                guard layerVisibility.isNodeKindVisible(n.kind) else { continue }
+                if n.x >= vis.minX - clipMargin, n.x <= vis.maxX + clipMargin,
+                   n.y >= vis.minY - clipMargin, n.y <= vis.maxY + clipMargin {
                     visibleNodeCount += 1
                 }
             }
@@ -229,19 +240,19 @@ struct CanvasMapLabelsOverlay: View {
 
             let font = Font.system(size: CGFloat(labelFontSize))
 
-            let nodeCap = scene.nodes.count > 8000 ? (scale >= 1.15 ? Int.max : 0) : Int.max
-            let linkCap = scene.links.count > 8000 ? (scale >= 1.15 ? Int.max : 0) : Int.max
+            // 万级以上模型曾用 userScale≥1.15 才收集标注；在 clipMargin 修正后不再用 scale 卡死——密度由 visibleNodeCount≤500 与 maxAcceptedLabels 限制。
 
             var preparedNodes: [PreparedNodeMapLabel] = []
             var preparedLinks: [PreparedLinkMapLabel] = []
             preparedNodes.reserveCapacity(min(scene.nodes.count, 6000))
             preparedLinks.reserveCapacity(min(scene.links.count, 6000))
 
-            if anyNodeLabel, nodeCap > 0 {
+            if anyNodeLabel {
                 var collected = 0
                 for n in scene.nodes {
                     if collected >= 6000 { break }
-                    if n.x < vis.minX - margin || n.x > vis.maxX + margin || n.y < vis.minY - margin || n.y > vis.maxY + margin {
+                    guard layerVisibility.isNodeKindVisible(n.kind) else { continue }
+                    if n.x < vis.minX - clipMargin || n.x > vis.maxX + clipMargin || n.y < vis.minY - clipMargin || n.y > vis.maxY + clipMargin {
                         continue
                     }
                     let lines = nodeLabelLines(nodeIndex: n.nodeIndex)
@@ -258,13 +269,14 @@ struct CanvasMapLabelsOverlay: View {
                 }
             }
 
-            if anyLinkLabel, linkCap > 0 {
+            if anyLinkLabel {
                 var collected = 0
                 for l in scene.links {
                     if collected >= 6000 { break }
+                    guard layerVisibility.isLinkKindVisible(l.kind) else { continue }
                     let mx = (l.x1 + l.x2) * 0.5
                     let my = (l.y1 + l.y2) * 0.5
-                    if mx < vis.minX - margin || mx > vis.maxX + margin || my < vis.minY - margin || my > vis.maxY + margin {
+                    if mx < vis.minX - clipMargin || mx > vis.maxX + clipMargin || my < vis.minY - clipMargin || my > vis.maxY + clipMargin {
                         continue
                     }
                     let parts = linkLabelParts(linkIndex: l.linkIndex)

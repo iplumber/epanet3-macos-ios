@@ -28,6 +28,7 @@
 #include "Elements/valve.h"
 
 #include <iostream>
+#include <cstring>
 #include <iomanip>
 #include <time.h>
 #include <string>
@@ -274,6 +275,24 @@ int EN_writeResults(int t, EN_Project p)
 int EN_writeMsgLog(EN_Project p)
 {
     project(p)->writeMsgLog();
+    return 0;
+}
+
+//-----------------------------------------------------------------------------
+
+int EN_getMessageLog(char* buf, int maxLen, EN_Project p)
+{
+    if ( buf == nullptr || maxLen <= 0 ) return 208;
+    Network* nw = project(p)->getNetwork();
+    std::string s = nw->msgLog.str();
+    size_t cap = static_cast<size_t>(maxLen - 1);
+    if ( s.size() > cap )
+    {
+        std::memcpy(buf, s.c_str(), cap);
+        buf[cap] = '\0';
+        return 1;
+    }
+    std::memcpy(buf, s.c_str(), s.size() + 1);
     return 0;
 }
 

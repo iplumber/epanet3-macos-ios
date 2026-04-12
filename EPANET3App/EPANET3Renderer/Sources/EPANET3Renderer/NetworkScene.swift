@@ -69,3 +69,48 @@ public struct NetworkScene {
         self.bounds = (minX, minY, maxX, maxY)
     }
 }
+
+/// 画布按类型显示/隐藏（与 `NodeVertex.kind` / `LinkVertex.kind` 一致：节点 0/1/2，管段 0=Pipe 1=Pump 2=Valve）。
+public struct CanvasLayerVisibility: Equatable, Sendable {
+    public var showJunction: Bool
+    public var showReservoir: Bool
+    public var showTank: Bool
+    public var showPipe: Bool
+    public var showPump: Bool
+    public var showValve: Bool
+
+    public init(
+        showJunction: Bool = true,
+        showReservoir: Bool = true,
+        showTank: Bool = true,
+        showPipe: Bool = true,
+        showPump: Bool = true,
+        showValve: Bool = true
+    ) {
+        self.showJunction = showJunction
+        self.showReservoir = showReservoir
+        self.showTank = showTank
+        self.showPipe = showPipe
+        self.showPump = showPump
+        self.showValve = showValve
+    }
+
+    public static let allVisible = CanvasLayerVisibility()
+
+    public func isNodeKindVisible(_ kind: UInt8) -> Bool {
+        switch kind {
+        case 0: return showJunction
+        case 1: return showReservoir
+        case 2: return showTank
+        default: return true
+        }
+    }
+
+    public func isLinkKindVisible(_ kind: UInt8) -> Bool {
+        switch kind {
+        case 0: return showPipe
+        case 1: return showPump
+        default: return showValve
+        }
+    }
+}

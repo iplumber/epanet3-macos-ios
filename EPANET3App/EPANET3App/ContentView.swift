@@ -1007,17 +1007,17 @@ private struct StartupFileActionButtonStyle: ButtonStyle {
         let isPrimary = role == .primary
         return configuration.label
             .font(.system(size: 13, weight: .medium))
-            .foregroundColor(isPrimary ? Color.white : Color.primary)
+            .foregroundColor(isPrimary ? Color.accentColor : Color.primary)
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: Self.height, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(isPrimary ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
+                    .fill(Color.white)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .strokeBorder(
-                        isPrimary ? Color.clear : Color.primary.opacity(0.2),
+                        Color.primary.opacity(isPrimary ? 0.35 : 0.2),
                         lineWidth: 1
                     )
             )
@@ -1050,7 +1050,7 @@ private struct StartupSplitView: View {
                         Label("新建文件", systemImage: "doc.badge.plus")
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .buttonStyle(StartupFileActionButtonStyle(role: .secondary))
+                    .buttonStyle(StartupFileActionButtonStyle(role: .primary))
                     Button {
                         appState.openFile()
                     } label: {
@@ -2739,7 +2739,7 @@ private struct MacDesignSidebar: View {
             // 单层列表：节点类与管段类不分组；管段类顺序为 阀门 → 管段 → 水泵
             if counts.junctions > 0 {
                 MacTreeRow(
-                    title: "节点", count: counts.junctions, icon: "circle.fill", tint: .blue, layerToggle: $layerJunction,
+                    title: "节点", count: counts.junctions, icon: "circle.fill", tint: Color(white: 0.35), layerToggle: $layerJunction,
                     layerTableKind: .junction, canOpenObjectTable: documentReady,
                     onOpenObjectTable: { appState.openObjectTable($0) }
                 )
@@ -2760,7 +2760,7 @@ private struct MacDesignSidebar: View {
             }
             if counts.valves > 0 {
                 MacTreeRow(
-                    title: "阀门", count: counts.valves, icon: "", tint: .orange, layerToggle: $layerValve, valveBowtie: true,
+                    title: "阀门", count: counts.valves, icon: "", tint: .blue, layerToggle: $layerValve, valveBowtie: true,
                     layerTableKind: .valve, canOpenObjectTable: documentReady,
                     onOpenObjectTable: { appState.openObjectTable($0) }
                 )
@@ -2907,6 +2907,81 @@ private struct SidebarValveBowtieShape: Shape {
     }
 }
 
+/// 阀门拟物图标：保留双三角阀体语义，增加接管、金属高光与中心阀芯。
+private struct SkeuomorphicValveIcon: View {
+    var tint: Color
+    var width: CGFloat = 12
+    var height: CGFloat = 10
+
+    var body: some View {
+        ZStack {
+            // 左右竖法兰盘
+            HStack(spacing: width * 0.48) {
+                RoundedRectangle(cornerRadius: 0.8)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.gray.opacity(0.45), Color.gray.opacity(0.72), Color.gray.opacity(0.42)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: max(1.2, width * 0.14), height: height * (0.665 * 1.35))
+                RoundedRectangle(cornerRadius: 0.8)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.gray.opacity(0.45), Color.gray.opacity(0.72), Color.gray.opacity(0.42)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: max(1.2, width * 0.14), height: height * (0.665 * 1.35))
+            }
+
+            // 中间蓝色阀体（连接左右法兰）
+            RoundedRectangle(cornerRadius: height * 0.20)
+                .fill(
+                    LinearGradient(
+                        colors: [tint.opacity(0.98), tint.opacity(0.82), tint.opacity(0.70)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: height * 0.20)
+                        .stroke(Color.white.opacity(0.55), lineWidth: 0.55)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: height * 0.20)
+                        .stroke(tint.opacity(0.88), lineWidth: 0.65)
+                )
+                .shadow(color: .black.opacity(0.18), radius: 0.8, x: 0.2, y: 0.55)
+                .frame(width: width * 0.62, height: height * (0.64 * 0.8))
+
+            // 顶部阀杆
+            Capsule()
+                .fill(Color.gray.opacity(0.62))
+                .frame(width: max(0.9, width * 0.08), height: height * 0.42)
+                .offset(y: -height * 0.47)
+
+            // 顶部横向转动盘（手轮简笔）
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.gray.opacity(0.42), Color.gray.opacity(0.76), Color.gray.opacity(0.46)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .overlay(
+                    Capsule().stroke(Color.black.opacity(0.20), lineWidth: 0.45)
+                )
+                .frame(width: width * 0.55, height: max(1.0, height * 0.14))
+                .offset(y: -height * 0.66)
+        }
+        .frame(width: width * 1.25, height: height)
+    }
+}
+
 /// 与画布水泵符号外接圆像素：`legendCircumPt * 3`（见 `MetalNetworkView` 中计算）。
 private enum SidebarPumpLegendLayout {
     static let frameW: CGFloat = 12
@@ -2976,7 +3051,7 @@ private struct TopologyToolbarLegendIcon: View {
             switch tool {
             case .junction:
                 Image(systemName: "circle.fill")
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Color(white: 0.35))
             case .tankTower:
                 SidebarTankNotchedSquareShape()
                     .fill(Color.green)
@@ -2989,9 +3064,7 @@ private struct TopologyToolbarLegendIcon: View {
                 Image(systemName: "line.diagonal")
                     .foregroundStyle(.gray)
             case .valve:
-                SidebarValveBowtieShape()
-                    .fill(Color.orange)
-                    .frame(width: 12, height: 10)
+                SkeuomorphicValveIcon(tint: .blue, width: 12, height: 10)
             case .pump:
                 SidebarPumpLegendIcon(tint: .red)
             }
@@ -3056,9 +3129,7 @@ private struct MacTreeRow: View {
                         .fill(tint)
                         .frame(width: 12, height: 10)
                 } else if valveBowtie {
-                    SidebarValveBowtieShape()
-                        .fill(tint)
-                        .frame(width: 12, height: 10)
+                    SkeuomorphicValveIcon(tint: tint, width: 12, height: 10)
                 } else if pumpHollowCircleTriangle {
                     SidebarPumpLegendIcon(tint: tint)
                 } else {

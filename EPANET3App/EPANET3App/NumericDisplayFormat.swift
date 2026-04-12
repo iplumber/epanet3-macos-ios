@@ -9,10 +9,19 @@ enum NumericDisplayFormat {
         let nf = NumberFormatter()
         nf.locale = Self.posixLocale
         nf.numberStyle = .decimal
+        nf.usesGroupingSeparator = false
         nf.minimumFractionDigits = 0
         nf.maximumFractionDigits = 2
         nf.roundingMode = .halfEven
         return nf.string(from: NSNumber(value: value)) ?? String(value)
+    }
+
+    /// 解析对象表 / 属性面板中的十进制输入（去掉千位分隔符、空白，与 `formatPipeLengthOrDiameter` 展示一致）。
+    static func parseDecimalInput(_ text: String) -> Double? {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ",", with: "")
+        guard !t.isEmpty else { return nil }
+        return Double(t)
     }
 
     /// 管段流量、流速：固定两位小数。

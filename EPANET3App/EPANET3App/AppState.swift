@@ -157,17 +157,24 @@ public struct TimeSeriesResultStore {
         return src.map { $0[linkIndex] }
     }
 
-    /// 与工具栏时间轴当前时刻（秒）最接近的水力行下标。
+    /// 与工具栏时间轴当前时刻（秒）最接近的水力行下标（二分查找，O(log n)）。
     public func rowIndexNearest(toPlayheadSeconds playhead: Double) -> Int? {
         guard !timePoints.isEmpty else { return nil }
         let target = Int(playhead.rounded())
-        var bestIdx = 0
-        var bestDist = Int.max
-        for (i, tp) in timePoints.enumerated() {
-            let d = abs(tp - target)
-            if d < bestDist { bestDist = d; bestIdx = i }
+        var lo = 0
+        var hi = timePoints.count - 1
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2
+            if timePoints[mid] < target {
+                lo = mid + 1
+            } else {
+                hi = mid
+            }
         }
-        return bestIdx
+        if lo > 0 && abs(timePoints[lo - 1] - target) < abs(timePoints[lo] - target) {
+            return lo - 1
+        }
+        return lo
     }
 }
 

@@ -144,6 +144,10 @@ do {
     }
 
     print("\nProject API test completed successfully.")
+} catch let EpanetError.apiErrorWithInputDetail(code, log) {
+    let detail = EpanetProject.describeError(code: code)
+    print("EPANET API error: [\(code)] \(detail)\n\(log)")
+    exit(Int32(truncatingIfNeeded: code))
 } catch EpanetError.apiError(let code) {
     let detail = EpanetProject.describeError(code: code)
     print("EPANET API error: [\(code)] \(detail)")

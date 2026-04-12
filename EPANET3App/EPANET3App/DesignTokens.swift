@@ -193,7 +193,7 @@ enum DisplayCanvasLinkColor {
     static let pumpKey = "settings.display.linkRGB.pump"
     /// 与旧版管线默认 / 设置页示意接近（sRGB 8bit）
     static let defaultPipe = 0x3366B2
-    static let defaultValve = 0xFF9500
+    static let defaultValve = 0x3366B2
     static let defaultPump = 0xCC3333
 
     static func rgbFloats(packed: Int) -> (Float, Float, Float) {

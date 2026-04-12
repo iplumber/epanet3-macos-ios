@@ -7,6 +7,9 @@ import AppKit
 @main
 struct EPANET3MacApp: App {
     @StateObject private var appState = AppState()
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(EPANET3MacApplicationDelegate.self) private var appDelegate
+    #endif
 
     init() {
         _appState = StateObject(wrappedValue: AppState())
@@ -26,6 +29,9 @@ struct EPANET3MacApp: App {
                 .environmentObject(appState)
                 .frame(minWidth: 800, minHeight: 600)
                 .onAppear {
+                    #if os(macOS)
+                    appDelegate.appState = appState
+                    #endif
                     appState.macOpenSettingsHandler = { tab in
                         SettingsWindowController.shared.show(appState: appState, initialTab: tab)
                     }
@@ -66,6 +72,18 @@ struct EPANET3MacApp: App {
                     .keyboardShortcut("n", modifiers: .command)
             }
             CommandGroup(replacing: .saveItem) {}
+            CommandGroup(replacing: .undoRedo) {
+                Button("撤销") {
+                    appState.undo()
+                }
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(!appState.canUndo || !appState.hasEpanetProject)
+                Button("重做") {
+                    appState.redo()
+                }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(!appState.canRedo || !appState.hasEpanetProject)
+            }
             CommandGroup(after: .newItem) {
                 Button("打开") { appState.openFile() }
                     .keyboardShortcut("o", modifiers: .command)
@@ -81,6 +99,22 @@ struct EPANET3MacApp: App {
                 Button("运行计算") { appState.runCalculation() }
                     .keyboardShortcut("r", modifiers: .command)
                     .disabled(!appState.canRunHydraulicSolver || appState.isRunning)
+            }
+            // 并入系统「显示」(View) 菜单，避免与 `CommandMenu("显示")` 重复出现两个同名菜单。
+            CommandGroup(after: .sidebar) {
+                Divider()
+                Button("节点表格…") { appState.openObjectTable(.junction) }
+                    .disabled(!appState.hasEpanetProject)
+                Button("水塔表格…") { appState.openObjectTable(.tank) }
+                    .disabled(!appState.hasEpanetProject)
+                Button("水库表格…") { appState.openObjectTable(.reservoir) }
+                    .disabled(!appState.hasEpanetProject)
+                Button("管段表格…") { appState.openObjectTable(.pipe) }
+                    .disabled(!appState.hasEpanetProject)
+                Button("阀门表格…") { appState.openObjectTable(.valve) }
+                    .disabled(!appState.hasEpanetProject)
+                Button("水泵表格…") { appState.openObjectTable(.pump) }
+                    .disabled(!appState.hasEpanetProject)
             }
             CommandGroup(after: .pasteboard) {
                 Toggle(isOn: Binding(
@@ -115,6 +149,37 @@ struct EPANET3MacApp: App {
         //    改用 SettingsWindowController 手动管理窗口。
     }
 }
+
+// MARK: - 退出前未保存提示
+
+#if os(macOS)
+@MainActor
+final class EPANET3MacApplicationDelegate: NSObject, NSApplicationDelegate {
+    weak var appState: AppState?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let appState, appState.hasUnsavedChanges else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = "是否保存对文件的更改？"
+        alert.informativeText = "您有尚未保存到 .inp 的修改。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "不保存")
+        alert.addButton(withTitle: "取消")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            appState.saveFile()
+            if appState.errorMessage != nil { return .terminateCancel }
+            if appState.hasUnsavedChanges { return .terminateCancel }
+            return .terminateNow
+        case .alertSecondButtonReturn:
+            return .terminateNow
+        default:
+            return .terminateCancel
+        }
+    }
+}
+#endif
 
 // MARK: - 设置窗口控制器（替代 Settings { } 场景）
 

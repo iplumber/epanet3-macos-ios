@@ -19,6 +19,14 @@ struct EPANET3App: App {
         #if os(macOS)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .undoRedo) {
+                Button("撤销") { appState.undo() }
+                    .keyboardShortcut("z", modifiers: .command)
+                    .disabled(!appState.canUndo || !appState.hasEpanetProject)
+                Button("重做") { appState.redo() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(!appState.canRedo || !appState.hasEpanetProject)
+            }
             CommandMenu("文件") {
                 Button("新建文件") {
                     appState.newFile()

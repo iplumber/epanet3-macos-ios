@@ -196,6 +196,8 @@ int        EN_writeReport(EN_Project p);
 int        EN_writeSummary(EN_Project p);
 int        EN_writeResults(int t, EN_Project p);
 int        EN_writeMsgLog(EN_Project p);
+/// Copies the project's accumulated input/parser message log (e.g. after a failed EN_loadProject). Returns 0, or 1 if truncated, or 208 if buf invalid.
+int        EN_getMessageLog(char *buf, int maxLen, EN_Project p);
 int        EN_getError(int, char *, int, EN_Project);
 
 int        EN_getCount(int, int *, EN_Project);

@@ -107,6 +107,8 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
         var linkRGBPipe: (Float, Float, Float) = (0.2, 0.4, 0.7)
         var linkRGBPump: (Float, Float, Float) = (0.8, 0.2, 0.2)
         var linkRGBValve: (Float, Float, Float) = (1.0, 0.58, 0)
+        /// 与侧栏「图层」开关一致；仅影响绘制与命中，不改场景数据。
+        var layerVisibility: CanvasLayerVisibility = .allVisible
         var pipelineState: MTLRenderPipelineState?
         var linePipeline: MTLRenderPipelineState?
         var lineScalarPipeline: MTLRenderPipelineState?
@@ -195,6 +197,17 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
         float3 colorMap(float t) {
             t = clamp(t, 0.0, 1.0);
             return float3(t, 0.2, 1.0 - t); // blue -> red
+        }
+        // 图层可见性：vis[0..2] 为 0/1（管段 pipe/pump/valve；节点 junction/reservoir/tank），与 kind 一致。
+        void layer_link_discard(float k, constant float *vis) {
+            if (k < 0.5) { if (vis[0] < 0.5) discard_fragment(); }
+            else if (k < 1.5) { if (vis[1] < 0.5) discard_fragment(); }
+            else { if (vis[2] < 0.5) discard_fragment(); }
+        }
+        void layer_node_discard(float k, constant float *vis) {
+            if (k < 0.5) { if (vis[0] < 0.5) discard_fragment(); }
+            else if (k < 1.5) { if (vis[1] < 0.5) discard_fragment(); }
+            else { if (vis[2] < 0.5) discard_fragment(); }
         }
         // 管段：先在场景→NDC，再在「像素空间算法向」后转回 NDC 偏移，线宽为恒定屏幕像素，与缩放/走向无关。
         // uniforms[0..3]=scaleX,scaleY,offX,offY；[4]=线宽(像素)；[5]=0/1 双剖分；[6],[7]=viewport W,H（像素）
@@ -325,8 +338,9 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             float2 lm = float2(dot(fragScene - M, d), dot(fragScene - M, n));
             if (dot(lm, lm) < g * g) discard_fragment();
         }
-        fragment float4 fragment_line_kind(LineVertexOut in [[stage_in]], constant float *rgb [[buffer(0)]], constant float *hole [[buffer(1)]]) {
+        fragment float4 fragment_line_kind(LineVertexOut in [[stage_in]], constant float *rgb [[buffer(0)]], constant float *hole [[buffer(1)]], constant float *layerVis [[buffer(2)]]) {
             fragment_pump_line_hole_discard(in, hole);
+            layer_link_discard(in.kind, layerVis);
             float3 cp = float3(rgb[0], rgb[1], rgb[2]);
             float3 cpm = float3(rgb[3], rgb[4], rgb[5]);
             float3 cv = float3(rgb[6], rgb[7], rgb[8]);
@@ -334,19 +348,22 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             float3 c = (k < 0.5) ? cp : ((k < 1.5) ? cpm : cv);
             return float4(c, 1);
         }
-        fragment float4 fragment_line_scalar(LineVertexOut in [[stage_in]], constant float *range [[buffer(0)]], constant float *hole [[buffer(1)]]) {
+        fragment float4 fragment_line_scalar(LineVertexOut in [[stage_in]], constant float *range [[buffer(0)]], constant float *hole [[buffer(1)]], constant float *layerVis [[buffer(2)]]) {
             fragment_pump_line_hole_discard(in, hole);
+            layer_link_discard(in.kind, layerVis);
             float lo = range[0], hi = range[1];
             float t = (hi > lo) ? ((in.scalar - lo) / (hi - lo)) : 0.5;
             float3 c = colorMap(t);
             return float4(c, 1);
         }
-        fragment float4 fragment_highlight_line(LineVertexOut in [[stage_in]], constant float *hole [[buffer(1)]]) {
+        fragment float4 fragment_highlight_line(LineVertexOut in [[stage_in]], constant float *hole [[buffer(1)]], constant float *layerVis [[buffer(2)]]) {
             fragment_pump_line_hole_discard(in, hole);
+            layer_link_discard(in.kind, layerVis);
             return float4(1.0, 0.12, 0.12, 1);
         }
-        // 阀门：两等边三角形共顶点于管段中点，对称轴与管线方向 d 一致；uniform[8]=三角形边长(像素)
-        vertex LineVertexOut vertex_valve_glyph(
+        // 阀门（闸阀简笔）：左右竖法兰 + 中间鼓起阀体 + 顶部横向手轮；uniform[8]=符号半宽(像素)
+        struct ValveGlyphOut { float4 pos [[position]]; float2 q; };
+        vertex ValveGlyphOut vertex_valve_glyph(
             constant float *uniforms [[buffer(0)]],
             constant float *inst [[buffer(1)]],
             uint vid [[vertex_id]],
@@ -358,27 +375,42 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             float pxX = max(vw * 0.5 * scaleX, 1e-9);
             float pxY = max(vh * 0.5 * scaleY, 1e-9);
             float pps = min(pxX, pxY);
-            float s = edgePx / pps;
-            float triH = s * 0.8660254037844386;
+            float g = edgePx / pps;
             uint b = iid * 4u;
             float2 M = float2(inst[b], inst[b+1]);
             float2 d = float2(inst[b+2], inst[b+3]);
             float2 n = float2(-d.y, d.x);
-            float2 L;
-            if (vid == 0u || vid == 3u) L = float2(0.0, 0.0);
-            else if (vid == 1u) L = float2(-0.5 * s, triH);
-            else if (vid == 2u) L = float2(0.5 * s, triH);
-            else if (vid == 4u) L = float2(-0.5 * s, -triH);
-            else L = float2(0.5 * s, -triH);
-            // 相对管线方向旋转 90°：原 ly→沿管、lx→法向，使符号与制图习惯一致
-            float2 w = M - L.y * d + L.x * n;
-            LineVertexOut o;
+            uint c = vid % 6u;
+            float2 uvl[6];
+            uvl[0]=float2(-1,-1); uvl[1]=float2(1,-1); uvl[2]=float2(1,1);
+            uvl[3]=float2(-1,-1); uvl[4]=float2(1,1); uvl[5]=float2(-1,1);
+            float2 qu = uvl[c];
+            float2 w = M + qu.x * g * d + qu.y * g * n;
+            ValveGlyphOut o;
             o.pos = float4(w.x * scaleX + offX, w.y * scaleY + offY, 0, 1);
-            o.scalar = 0.0;
-            o.kind = 2.0;
-            o.p0 = float2(0.0);
-            o.p1 = float2(0.0);
+            o.q = qu;
             return o;
+        }
+        float valve_sd_box(float2 p, float2 c, float2 b) {
+            float2 d = abs(p - c) - b;
+            return length(max(d, float2(0.0))) + min(max(d.x, d.y), 0.0);
+        }
+        bool valve_gate_hit(float2 q) {
+            // q ∈ [-1,1]^2
+            // 去掉法兰外侧短线：不再绘制主流向短管
+            bool bodyPipe = false;
+            // 法兰高度减少 30%：0.52 -> 0.364
+            bool flangeL  = (abs(q.x + 0.55) <= 0.07) && (abs(q.y) <= 0.364);
+            bool flangeR  = (abs(q.x - 0.55) <= 0.07) && (abs(q.y) <= 0.364);
+            bool bulgedBody = valve_sd_box(q, float2(0.0, 0.0), float2(0.30, 0.23)) <= 0.0;
+            bool stem = (abs(q.x) <= 0.045) && (q.y >= 0.22) && (q.y <= 0.58);
+            bool wheel = (abs(q.x) <= 0.30) && (abs(q.y - 0.70) <= 0.05);
+            return bodyPipe || flangeL || flangeR || bulgedBody || stem || wheel;
+        }
+        fragment float4 fragment_valve_glyph(ValveGlyphOut in [[stage_in]], constant float *rgb [[buffer(0)]], constant float *layerVis [[buffer(2)]]) {
+            layer_link_discard(2.0, layerVis);
+            if (!valve_gate_hit(in.q)) discard_fragment();
+            return float4(rgb[6], rgb[7], rgb[8], 1);
         }
         // 水泵：空心圆 + 圆上内接等边三角；q∈[-1,1]² 上 |q|=1 为圆，三角顶点 (1,0),(-0.5,±√3/2)；uniform[8]=外接圆半径(像素)，[9]=线宽(像素)
         struct PumpGlyphOut { float4 pos [[position]]; float2 q; float lh [[flat]]; };
@@ -420,7 +452,8 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             o.lh = lineWpx / (2.0 * circumPx);
             return o;
         }
-        fragment float4 fragment_pump_hollow(PumpGlyphOut in [[stage_in]], constant float *rgb [[buffer(0)]]) {
+        fragment float4 fragment_pump_hollow(PumpGlyphOut in [[stage_in]], constant float *rgb [[buffer(0)]], constant float *layerVis [[buffer(1)]]) {
+            layer_link_discard(1.0, layerVis);
             float r = length(in.q);
             float2 v0 = float2(1.0, 0.0);
             float2 v1 = float2(-0.5, 0.8660254037844386);
@@ -430,7 +463,8 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             if ((abs(r - 1.0) >= h) && (dtr >= h)) discard_fragment();
             return float4(rgb[0], rgb[1], rgb[2], 1);
         }
-        fragment float4 fragment_pump_hollow_red(PumpGlyphOut in [[stage_in]]) {
+        fragment float4 fragment_pump_hollow_red(PumpGlyphOut in [[stage_in]], constant float *layerVis [[buffer(0)]]) {
+            layer_link_discard(1.0, layerVis);
             float r = length(in.q);
             float2 v0 = float2(1.0, 0.0);
             float2 v1 = float2(-0.5, 0.8660254037844386);
@@ -440,7 +474,9 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             if ((abs(r - 1.0) >= h) && (dtr >= h)) discard_fragment();
             return float4(1.0, 0.12, 0.12, 1);
         }
-        fragment float4 fragment_valve_glyph_red(LineVertexOut in [[stage_in]]) {
+        fragment float4 fragment_valve_glyph_red(ValveGlyphOut in [[stage_in]], constant float *layerVis [[buffer(0)]]) {
+            layer_link_discard(2.0, layerVis);
+            if (!valve_gate_hit(in.q)) discard_fragment();
             return float4(1.0, 0.12, 0.12, 1);
         }
         // uniforms[0..3]=scaleX,scaleY,offX,offY；[4]=标记直径(像素)；[6],[7]=viewport W,H
@@ -518,8 +554,9 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             o.scalar = vals[n];
             return o;
         }
-        fragment float4 fragment_node_marker_kind(NodeMarkerOut in [[stage_in]], constant float *rgb [[buffer(0)]]) {
+        fragment float4 fragment_node_marker_kind(NodeMarkerOut in [[stage_in]], constant float *rgb [[buffer(0)]], constant float *layerVis [[buffer(1)]]) {
             if (node_marker_miss(in.local, in.kind)) discard_fragment();
+            layer_node_discard(in.kind, layerVis);
             float3 cj = float3(rgb[0], rgb[1], rgb[2]);
             float3 cr = float3(rgb[3], rgb[4], rgb[5]);
             float3 ct = float3(rgb[6], rgb[7], rgb[8]);
@@ -527,15 +564,17 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             float3 c = (k < 0.5) ? cj : ((k < 1.5) ? cr : ct);
             return float4(c, 1);
         }
-        fragment float4 fragment_node_marker_scalar(NodeMarkerScalarOut in [[stage_in]], constant float *range [[buffer(0)]]) {
+        fragment float4 fragment_node_marker_scalar(NodeMarkerScalarOut in [[stage_in]], constant float *range [[buffer(0)]], constant float *layerVis [[buffer(1)]]) {
             if (node_marker_miss(in.local, in.kind)) discard_fragment();
+            layer_node_discard(in.kind, layerVis);
             float lo = range[0], hi = range[1];
             float t = (hi > lo) ? ((in.scalar - lo) / (hi - lo)) : 0.5;
             float3 c = colorMap(t);
             return float4(c, 1);
         }
-        fragment float4 fragment_node_marker_highlight(NodeMarkerOut in [[stage_in]]) {
+        fragment float4 fragment_node_marker_highlight(NodeMarkerOut in [[stage_in]], constant float *layerVis [[buffer(0)]]) {
             if (node_marker_miss(in.local, in.kind)) discard_fragment();
+            layer_node_discard(in.kind, layerVis);
             return float4(1.0, 0.12, 0.12, 1);
         }
         """
@@ -572,9 +611,10 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             lineHiDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
             lineHighlightPipeline = try? device.makeRenderPipelineState(descriptor: lineHiDesc)
             let vertValveGlyph = library?.makeFunction(name: "vertex_valve_glyph")
+            let fragValveGlyph = library?.makeFunction(name: "fragment_valve_glyph")
             let valveGlyphDesc = MTLRenderPipelineDescriptor()
             valveGlyphDesc.vertexFunction = vertValveGlyph
-            valveGlyphDesc.fragmentFunction = fragLine
+            valveGlyphDesc.fragmentFunction = fragValveGlyph
             valveGlyphDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
             valveGlyphPipeline = try? device.makeRenderPipelineState(descriptor: valveGlyphDesc)
             let fragValveRed = library?.makeFunction(name: "fragment_valve_glyph_red")
@@ -694,6 +734,17 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             let minPumpSegPx = 2 * pumpCircumPx * 1.08
             let lineHoleUniforms: [Float] = [scaleX, scaleYVal, offX, offY, dw, dh, pumpCircumPx, minPumpSegPx]
             let lineUniLen = 9 * MemoryLayout<Float>.stride
+            var linkLayerVis: [Float] = [
+                layerVisibility.showPipe ? 1 : 0,
+                layerVisibility.showPump ? 1 : 0,
+                layerVisibility.showValve ? 1 : 0,
+            ]
+            var nodeLayerVis: [Float] = [
+                layerVisibility.showJunction ? 1 : 0,
+                layerVisibility.showReservoir ? 1 : 0,
+                layerVisibility.showTank ? 1 : 0,
+            ]
+            let layerVisBytes = 3 * MemoryLayout<Float>.stride
 
             guard let cmdBuf = queue.makeCommandBuffer(),
                   let enc = cmdBuf.makeRenderCommandEncoder(descriptor: rpd) else { return }
@@ -717,6 +768,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
                     var r: [Float] = [range.0, range.1]
                     enc.setFragmentBytes(&r, length: 8, index: 0)
                     enc.setFragmentBytes(&lineHole, length: lineHole.count * MemoryLayout<Float>.stride, index: 1)
+                    enc.setFragmentBytes(&linkLayerVis, length: layerVisBytes, index: 2)
                     enc.setVertexBuffer(scalarBuf, offset: 0, index: 2)
                     var uniforms: [Float] = [scaleX, scaleYVal, offX, offY, lineWpx, 0, dw, dh, pumpCircumPx]
                     enc.setVertexBytes(&uniforms, length: lineUniLen, index: 0)
@@ -736,6 +788,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
                     ]
                     enc.setFragmentBytes(&rgb, length: rgb.count * MemoryLayout<Float>.stride, index: 0)
                     enc.setFragmentBytes(&lineHole, length: lineHole.count * MemoryLayout<Float>.stride, index: 1)
+                    enc.setFragmentBytes(&linkLayerVis, length: layerVisBytes, index: 2)
                     var uniforms: [Float] = [scaleX, scaleYVal, offX, offY, lineWpx, 0, dw, dh, pumpCircumPx]
                     enc.setVertexBytes(&uniforms, length: lineUniLen, index: 0)
                     enc.setVertexBuffer(buf, offset: 0, index: 1)
@@ -762,6 +815,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
                 enc.setFragmentBytes(&rgbV, length: rgbV.count * MemoryLayout<Float>.stride, index: 0)
                 var lineHoleV = lineHoleUniforms
                 enc.setFragmentBytes(&lineHoleV, length: lineHoleV.count * MemoryLayout<Float>.stride, index: 1)
+                enc.setFragmentBytes(&linkLayerVis, length: layerVisBytes, index: 2)
                 var vuni: [Float] = [scaleX, scaleYVal, offX, offY, 0, 0, dw, dh, valveEdgePx]
                 enc.setVertexBytes(&vuni, length: vuni.count * MemoryLayout<Float>.stride, index: 0)
                 enc.setVertexBuffer(vbuf, offset: 0, index: 1)
@@ -772,7 +826,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             if let ppipe = pumpGlyphPipeline {
                 var pumpInst: [Float] = []
                 pumpInst.reserveCapacity(scene.links.count * 4)
-                for l in scene.links where l.kind == 1 {
+                for l in scene.links where l.kind == 1 && layerVisibility.showPump {
                     let span = Self.linkScreenSpanPixels(
                         x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2,
                         scaleX: scaleX, scaleY: scaleYVal, offX: offX, offY: offY,
@@ -800,6 +854,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
                         enc.setVertexBuffer(nil, offset: 0, index: 2)
                         var rgbP: [Float] = [linkRGBPump.0, linkRGBPump.1, linkRGBPump.2]
                         enc.setFragmentBytes(&rgbP, length: rgbP.count * MemoryLayout<Float>.stride, index: 0)
+                        enc.setFragmentBytes(&linkLayerVis, length: layerVisBytes, index: 1)
                         var puni: [Float] = [scaleX, scaleYVal, offX, offY, 0, 0, dw, dh, pumpCircumPx, pumpStrokePx]
                         enc.setVertexBytes(&puni, length: puni.count * MemoryLayout<Float>.stride, index: 0)
                         enc.setVertexBuffer(pbuf, offset: 0, index: 1)
@@ -820,6 +875,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
                     enc.setRenderPipelineState(pointScalarPipeline)
                     var r: [Float] = [range.0, range.1]
                     enc.setFragmentBytes(&r, length: 8, index: 0)
+                    enc.setFragmentBytes(&nodeLayerVis, length: layerVisBytes, index: 1)
                     enc.setVertexBuffer(scalarBuf, offset: 0, index: 2)
                 } else if let pipelineState = pipelineState {
                     enc.setRenderPipelineState(pipelineState)
@@ -829,6 +885,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
                         nodeRGBTank.0, nodeRGBTank.1, nodeRGBTank.2,
                     ]
                     enc.setFragmentBytes(&rgb, length: rgb.count * MemoryLayout<Float>.stride, index: 0)
+                    enc.setFragmentBytes(&nodeLayerVis, length: layerVisBytes, index: 1)
                 }
                 enc.setVertexBytes(&uniforms, length: nodeUniLen, index: 0)
                 enc.setVertexBuffer(buf, offset: 0, index: 1)
@@ -846,6 +903,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
                 let hiWpx = min(max(linkLineWidthPixels * 1.5, lineWpx + 1), 32)
                 var lineHoleHi = lineHoleUniforms
                 enc.setFragmentBytes(&lineHoleHi, length: lineHoleHi.count * MemoryLayout<Float>.stride, index: 1)
+                enc.setFragmentBytes(&linkLayerVis, length: layerVisBytes, index: 2)
                 var uniforms: [Float] = [scaleX, scaleYVal, offX, offY, hiWpx, 0, dw, dh, pumpCircumPx]
                 for idx in linkHiList where idx >= 0 && idx < lineCount {
                     enc.setVertexBytes(&uniforms, length: lineUniLen, index: 0)
@@ -902,6 +960,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
                         }
                     }
                     enc.setRenderPipelineState(vpipe)
+                    enc.setFragmentBytes(&linkLayerVis, length: layerVisBytes, index: 0)
                     var vuni: [Float] = [scaleX, scaleYVal, offX, offY, 0, 0, dw, dh, valveEdgePx]
                     enc.setVertexBytes(&vuni, length: vuni.count * MemoryLayout<Float>.stride, index: 0)
                     enc.setVertexBuffer(ob, offset: 0, index: 1)
@@ -917,6 +976,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
                     }
                     let pumpStrokePx = max(linkLineWidthPixels, 0.85)
                     enc.setRenderPipelineState(ppipe)
+                    enc.setFragmentBytes(&linkLayerVis, length: layerVisBytes, index: 0)
                     var puni: [Float] = [scaleX, scaleYVal, offX, offY, 0, 0, dw, dh, pumpCircumPx, pumpStrokePx]
                     enc.setVertexBytes(&puni, length: puni.count * MemoryLayout<Float>.stride, index: 0)
                     enc.setVertexBuffer(ob, offset: 0, index: 1)
@@ -931,6 +991,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             }()
             if !nodeHiList.isEmpty, let pointHi = pointHighlightPipeline, let buf = pointBuffer {
                 enc.setRenderPipelineState(pointHi)
+                enc.setFragmentBytes(&nodeLayerVis, length: layerVisBytes, index: 0)
                 let nodeUniLen = 8 * MemoryLayout<Float>.stride
                 let hiDiam = min(max(nodePointSizePixels * 1.35, nodePointSizePixels + 2), 40)
                 var uniforms: [Float] = [scaleX, scaleYVal, offX, offY, hiDiam, 0, dw, dh]
@@ -967,6 +1028,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             linkHalfWidthScene = min(linkHalfWidthScene, proj.span * 0.04)
             var bestNode: (index: Int, dist: Float)?
             for (i, n) in scene.nodes.enumerated() {
+                if !layerVisibility.isNodeKindVisible(n.kind) { continue }
                 let d = (n.x - sx) * (n.x - sx) + (n.y - sy) * (n.y - sy)
                 // 水池/水塔画布标记为 junction 直径的 3 倍，hit 与方形角点略放大
                 let nodeRadiusScene = nodeRadiusBase * (n.kind == 0 ? 1 : (3 * 1.12))
@@ -975,6 +1037,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             }
             var bestLink: (index: Int, dist: Float)?
             for (i, l) in scene.links.enumerated() {
+                if !layerVisibility.isLinkKindVisible(l.kind) { continue }
                 let d = Self.distToSegment(px: sx, py: sy, x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2)
                 if d <= linkHalfWidthScene, bestLink == nil || d < bestLink!.dist { bestLink = (i, d) }
             }
@@ -1100,6 +1163,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
 
             var nodeSet = Set<Int>()
             for (i, n) in scene.nodes.enumerated() {
+                if !layerVisibility.isNodeKindVisible(n.kind) { continue }
                 let r = nodeRadiusBase * (n.kind == 0 ? 1 : (3 * 1.12))
                 let ok: Bool
                 switch mode {
@@ -1113,6 +1177,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
 
             var linkSet = Set<Int>()
             for (i, l) in scene.links.enumerated() {
+                if !layerVisibility.isLinkKindVisible(l.kind) { continue }
                 let ok: Bool
                 switch mode {
                 case .crossing:
@@ -1464,6 +1529,7 @@ public struct MetalNetworkView: NSViewRepresentable {
     let linkColorPipe: (Float, Float, Float)
     let linkColorPump: (Float, Float, Float)
     let linkColorValve: (Float, Float, Float)
+    let layerVisibility: CanvasLayerVisibility
     let clearColor: MTLClearColor?
     let onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)?
     let onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)?
@@ -1504,6 +1570,7 @@ public struct MetalNetworkView: NSViewRepresentable {
         linkColorPipe: (Float, Float, Float) = (0.2, 0.4, 0.7),
         linkColorPump: (Float, Float, Float) = (0.8, 0.2, 0.2),
         linkColorValve: (Float, Float, Float) = (1.0, 0.58, 0),
+        layerVisibility: CanvasLayerVisibility = .allVisible,
         clearColor: MTLClearColor? = nil,
         onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)? = nil,
         onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)? = nil,
@@ -1541,6 +1608,7 @@ public struct MetalNetworkView: NSViewRepresentable {
         self.linkColorPipe = linkColorPipe
         self.linkColorPump = linkColorPump
         self.linkColorValve = linkColorValve
+        self.layerVisibility = layerVisibility
         self.clearColor = clearColor
         self.onScrollWheel = onScrollWheel
         self.onPanDelta = onPanDelta
@@ -1613,6 +1681,7 @@ public struct MetalNetworkView: NSViewRepresentable {
         context.coordinator.linkRGBPipe = linkColorPipe
         context.coordinator.linkRGBPump = linkColorPump
         context.coordinator.linkRGBValve = linkColorValve
+        context.coordinator.layerVisibility = layerVisibility
         context.coordinator.onDrawableSizeChange = onDrawableSizeChange
         container.addSubview(mtkView)
         mtkView.translatesAutoresizingMaskIntoConstraints = false
@@ -1648,6 +1717,7 @@ public struct MetalNetworkView: NSViewRepresentable {
         context.coordinator.linkRGBPipe = linkColorPipe
         context.coordinator.linkRGBPump = linkColorPump
         context.coordinator.linkRGBValve = linkColorValve
+        context.coordinator.layerVisibility = layerVisibility
         context.coordinator.onSelect = onSelect
         context.coordinator.onDrawableSizeChange = onDrawableSizeChange
         let coord2 = context.coordinator
@@ -1707,6 +1777,7 @@ public struct MetalNetworkView: UIViewRepresentable {
     let linkColorPipe: (Float, Float, Float)
     let linkColorPump: (Float, Float, Float)
     let linkColorValve: (Float, Float, Float)
+    let layerVisibility: CanvasLayerVisibility
     let clearColor: MTLClearColor?
     let onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)?
     let onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)?
@@ -1745,6 +1816,7 @@ public struct MetalNetworkView: UIViewRepresentable {
         linkColorPipe: (Float, Float, Float) = (0.2, 0.4, 0.7),
         linkColorPump: (Float, Float, Float) = (0.8, 0.2, 0.2),
         linkColorValve: (Float, Float, Float) = (1.0, 0.58, 0),
+        layerVisibility: CanvasLayerVisibility = .allVisible,
         clearColor: MTLClearColor? = nil,
         onScrollWheel: ((CGFloat, CGPoint, CGSize) -> Void)? = nil,
         onPanDelta: ((CGFloat, CGFloat, CGSize) -> Void)? = nil,
@@ -1782,6 +1854,7 @@ public struct MetalNetworkView: UIViewRepresentable {
         self.linkColorPipe = linkColorPipe
         self.linkColorPump = linkColorPump
         self.linkColorValve = linkColorValve
+        self.layerVisibility = layerVisibility
         self.clearColor = clearColor
         self.onScrollWheel = onScrollWheel
         self.onPanDelta = onPanDelta
@@ -1833,6 +1906,7 @@ public struct MetalNetworkView: UIViewRepresentable {
         context.coordinator.linkRGBPipe = linkColorPipe
         context.coordinator.linkRGBPump = linkColorPump
         context.coordinator.linkRGBValve = linkColorValve
+        context.coordinator.layerVisibility = layerVisibility
         context.coordinator.onSelect = onSelect
         context.coordinator.onDrawableSizeChange = onDrawableSizeChange
         let coord0 = context.coordinator
@@ -1866,6 +1940,7 @@ public struct MetalNetworkView: UIViewRepresentable {
         context.coordinator.linkRGBPipe = linkColorPipe
         context.coordinator.linkRGBPump = linkColorPump
         context.coordinator.linkRGBValve = linkColorValve
+        context.coordinator.layerVisibility = layerVisibility
         context.coordinator.onSelect = onSelect
         context.coordinator.onDrawableSizeChange = onDrawableSizeChange
         let coordU = context.coordinator

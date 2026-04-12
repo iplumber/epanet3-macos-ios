@@ -61,6 +61,9 @@ func _EN_writeResults(_ t: Int32, _ p: UnsafeMutableRawPointer?) -> Int32
 @_silgen_name("EN_writeMsgLog")
 func _EN_writeMsgLog(_ p: UnsafeMutableRawPointer?) -> Int32
 
+@_silgen_name("EN_getMessageLog")
+func _EN_getMessageLog(_ buf: UnsafeMutablePointer<CChar>?, _ maxLen: Int32, _ p: UnsafeMutableRawPointer?) -> Int32
+
 @_silgen_name("EN_getCount")
 func _EN_getCount(_ type: Int32, _ count: UnsafeMutablePointer<Int32>?, _ p: UnsafeMutableRawPointer?) -> Int32
 
@@ -233,7 +236,17 @@ public final class EpanetProject {
     public func load(path: String) throws {
         guard let h = handle else { throw EpanetError.projectNotCreated }
         let err = path.withCString { _EN_loadProject($0, h) }
-        if err != 0 { throw EpanetError.apiError(err) }
+        if err != 0 {
+            var buf = [CChar](repeating: 0, count: 8192)
+            _ = buf.withUnsafeMutableBufferPointer { ptr in
+                _EN_getMessageLog(ptr.baseAddress, Int32(ptr.count), h)
+            }
+            let log = String(cString: buf).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !log.isEmpty {
+                throw EpanetError.apiErrorWithInputDetail(code: err, inputDetail: log)
+            }
+            throw EpanetError.apiError(err)
+        }
     }
 
     public func save(path: String) throws {
@@ -293,6 +306,29 @@ public final class EpanetProject {
         guard let h = handle else { throw EpanetError.projectNotCreated }
         var count: Int32 = 0
         let err = _EN_getCount(ElementCounts.linkCount.rawValue, &count, h)
+        if err != 0 { throw EpanetError.apiError(err) }
+        return Int(count)
+    }
+
+    /// `[PATTERNS]` 条目数。
+    public func patternCount() throws -> Int {
+        try elementCount(.patCount)
+    }
+
+    /// `[CURVES]` 条目数。
+    public func curveCount() throws -> Int {
+        try elementCount(.curveCount)
+    }
+
+    /// 简单控制（`[CONTROLS]`）条目数。
+    public func controlCount() throws -> Int {
+        try elementCount(.controlCount)
+    }
+
+    private func elementCount(_ type: ElementCounts) throws -> Int {
+        guard let h = handle else { throw EpanetError.projectNotCreated }
+        var count: Int32 = 0
+        let err = _EN_getCount(type.rawValue, &count, h)
         if err != 0 { throw EpanetError.apiError(err) }
         return Int(count)
     }
@@ -549,6 +585,8 @@ public func runEpanet(inpPath: String, rptPath: String, outPath: String) throws 
 public enum EpanetError: Error, LocalizedError {
     case projectNotCreated
     case apiError(Int32)
+    /// Load/read failed; `inputDetail` is EPANET’s parser log (problem lines), when available.
+    case apiErrorWithInputDetail(code: Int32, inputDetail: String)
     case apiContext(code: Int32, context: EpanetErrorContext)
 
     public var code: Int32? {
@@ -556,6 +594,8 @@ public enum EpanetError: Error, LocalizedError {
         case .projectNotCreated:
             return nil
         case .apiError(let code):
+            return code
+        case .apiErrorWithInputDetail(let code, _):
             return code
         case .apiContext(let code, _):
             return code
@@ -577,6 +617,9 @@ public enum EpanetError: Error, LocalizedError {
             return "EPANET 项目未创建"
         case .apiError(let code):
             return "EPANET 错误 \(code): \(EpanetProject.describeError(code: code))"
+        case .apiErrorWithInputDetail(let code, let inputDetail):
+            let base = "EPANET 错误 \(code): \(EpanetProject.describeError(code: code))"
+            return inputDetail.isEmpty ? base : "\(base)\n\(inputDetail)"
         case .apiContext(let code, let context):
             let base = "EPANET 错误 \(code): \(EpanetProject.describeError(code: code))"
             let objectText: String
