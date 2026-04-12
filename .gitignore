@@ -25,6 +25,9 @@ epanet  resource/EPANET2.2-2.2.0/build/
 ### EPANET 2.2 upstream tree at repo root (local reference only; do not commit)
 EPANET2.2-2.2.0/
 
+### Local SCADA / runtime data (do not commit)
+scada数据/
+
 ### EPANET resources (keep local, only track selected inp files)
 epanet  resource/**
 
