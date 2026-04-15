@@ -228,6 +228,14 @@ int        EN_setNoriaExportVersion(const char *version, EN_Project);
 /// Sets default INP float precision (also updates Options output precision). Pass NULL or "" or "DEFAULT" for default; otherwise section name e.g. "JUNCTIONS" (case-insensitive).
 int        EN_setInpWriterSectionFractionDigits(const char *section, int digits, EN_Project);
 
+/// Bulk read all node results as float into 4 separate arrays (each nodeCount long).
+/// Any pointer may be NULL to skip that parameter.
+int        EN_getNodeResultsBulkF(float *pressure, float *head, float *demand, float *tankLevel, EN_Project);
+
+/// Bulk read all link results as float into 4 separate arrays (each linkCount long).
+/// Any pointer may be NULL to skip that parameter.
+int        EN_getLinkResultsBulkF(float *flow, float *velocity, float *headloss, float *status, EN_Project);
+
 //==================================================================================
 /*        TO BE ADDED
 int       EN_getPatternIndex(char *, int *, EN_Project);

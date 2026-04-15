@@ -136,6 +136,22 @@ func _EN_setNoriaExportVersion(_ version: UnsafePointer<CChar>?, _ p: UnsafeMuta
 @_silgen_name("EN_setInpWriterSectionFractionDigits")
 func _EN_setInpWriterSectionFractionDigits(_ section: UnsafePointer<CChar>?, _ digits: Int32, _ p: UnsafeMutableRawPointer?) -> Int32
 
+@_silgen_name("EN_getNodeResultsBulkF")
+func _EN_getNodeResultsBulkF(
+    _ pressure: UnsafeMutablePointer<Float>?,
+    _ head: UnsafeMutablePointer<Float>?,
+    _ demand: UnsafeMutablePointer<Float>?,
+    _ tankLevel: UnsafeMutablePointer<Float>?,
+    _ p: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("EN_getLinkResultsBulkF")
+func _EN_getLinkResultsBulkF(
+    _ flow: UnsafeMutablePointer<Float>?,
+    _ velocity: UnsafeMutablePointer<Float>?,
+    _ headloss: UnsafeMutablePointer<Float>?,
+    _ status: UnsafeMutablePointer<Float>?,
+    _ p: UnsafeMutableRawPointer?) -> Int32
+
 // MARK: - Enums (matching epanet3.h)
 
 public enum NodeParams: Int32 {
@@ -564,6 +580,34 @@ public final class EpanetProject {
             objectType: "管段",
             objectID: id
         )
+    }
+
+    /// Bulk-read all node results directly into caller-provided `[Float]` arrays.
+    public func getNodeResultsBulkF(pressure: inout [Float], head: inout [Float], demand: inout [Float], tankLevel: inout [Float]) {
+        guard let h = handle else { return }
+        pressure.withUnsafeMutableBufferPointer { pBuf in
+            head.withUnsafeMutableBufferPointer { hBuf in
+                demand.withUnsafeMutableBufferPointer { dBuf in
+                    tankLevel.withUnsafeMutableBufferPointer { tBuf in
+                        _ = _EN_getNodeResultsBulkF(pBuf.baseAddress, hBuf.baseAddress, dBuf.baseAddress, tBuf.baseAddress, h)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Bulk-read all link results directly into caller-provided `[Float]` arrays.
+    public func getLinkResultsBulkF(flow: inout [Float], velocity: inout [Float], headloss: inout [Float], status: inout [Float]) {
+        guard let h = handle else { return }
+        flow.withUnsafeMutableBufferPointer { fBuf in
+            velocity.withUnsafeMutableBufferPointer { vBuf in
+                headloss.withUnsafeMutableBufferPointer { hBuf in
+                    status.withUnsafeMutableBufferPointer { sBuf in
+                        _ = _EN_getLinkResultsBulkF(fBuf.baseAddress, vBuf.baseAddress, hBuf.baseAddress, sBuf.baseAddress, h)
+                    }
+                }
+            }
+        }
     }
 }
 

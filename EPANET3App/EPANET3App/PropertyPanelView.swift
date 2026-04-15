@@ -89,6 +89,12 @@ struct PropertyPanelView: View {
         let accentColor = colorScheme == .dark ? DesignColors.darkAccent : DesignColors.lightAccent
         let (label, tint): (String, Color) = {
             if canvasSelectionCount > 1 { return ("多选 \(canvasSelectionCount) 项", accentColor) }
+            if let s = appState.selectedScadaDevice {
+                let t: Color = s.kind == .pressure
+                    ? Color(red: 0.16, green: 0.55, blue: 0.87)
+                    : Color(red: 0.85, green: 0.42, blue: 0.14)
+                return (s.kind == .pressure ? "SCADA 压力" : "SCADA 流量", t)
+            }
             if selectedNodeIndex != nil { return ("节点 Junction", accentColor) }
             if selectedLinkIndex != nil { return ("管段 Pipe", Color.orange) }
             return ("未选中", text2)
@@ -104,6 +110,9 @@ struct PropertyPanelView: View {
 
     private var objectIDText: some View {
         let id: String = {
+            if let s = appState.selectedScadaDevice {
+                return s.deviceId
+            }
             guard let proj = appState.project else { return "—" }
             if canvasSelectionCount > 1 { return "—" }
             if let i = selectedNodeIndex { return (try? proj.getNodeId(index: i)) ?? "—" }
@@ -130,7 +139,15 @@ struct PropertyPanelView: View {
 
     @ViewBuilder
     private var propertiesTab: some View {
-        if let proj = appState.project {
+        if let row = appState.selectedScadaDeviceRow {
+            ScadaDevicePropertySection(appState: appState, row: row)
+            Divider().padding(.vertical, 6)
+            Text("SCADA 设备不参与管网编辑。运行计算并导入监测数据后，点击下方曲线区可对照实测与绑定节点/管段的仿真值。")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+        } else if let proj = appState.project {
             if appState.editorMode == .add {
                 AddToolsSection(appState: appState, units: units)
                 Divider().padding(.vertical, 6)
@@ -187,6 +204,11 @@ struct PropertyPanelView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
             }
+        } else if appState.selectedScadaDevice != nil {
+            Text("设备记录已失效，请重新导入 SCADA 或切换工程。")
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
         } else {
             Text("无管网数据（空白画布或仅显示模式）")
                 .foregroundColor(.secondary)
@@ -271,6 +293,44 @@ struct PropertyPanelView: View {
             }
         } catch {}
         return rows
+    }
+}
+
+// MARK: - SCADA 设备（只读）
+
+private struct ScadaDevicePropertySection: View {
+    @Environment(\.colorScheme) var colorScheme
+    @ObservedObject var appState: AppState
+    let row: ScadaDeviceRow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("SCADA 设备信息")
+                .font(DesignFonts.fieldLabel)
+                .foregroundColor(colorScheme == .dark ? DesignColors.darkText3 : DesignColors.lightText3)
+                .textCase(.uppercase)
+                .padding(.horizontal, DesignSizes.inspectorPaddingH)
+
+            PropertyFieldRow(label: "设备 ID", value: row.id)
+            PropertyFieldRow(label: "名称", value: row.name)
+            PropertyFieldRow(label: "X", value: row.x.map { String(format: "%.6f", $0) } ?? "—")
+            PropertyFieldRow(label: "Y", value: row.y.map { String(format: "%.6f", $0) } ?? "—")
+            PropertyFieldRow(label: "MODEL", value: row.model)
+            if let map = appState.scadaMapping {
+                if row.kind == .pressure, let nid = map.resolvedEpanetNodeId(forPressureModel: row.model) {
+                    PropertyFieldRow(label: "关联 EPANET 节点", value: nid)
+                } else if row.kind == .flow, let lid = map.resolvedEpanetLinkId(forFlowModel: row.model) {
+                    PropertyFieldRow(label: "关联 EPANET 管段", value: lid)
+                }
+            }
+            PropertyFieldRow(label: "CONV_ADD", value: String(row.convAdd))
+            PropertyFieldRow(label: "CONV_MUL", value: String(row.convMul))
+            PropertyFieldRow(label: "COMPARE_TITLE", value: row.compareTitle.isEmpty ? "—" : row.compareTitle)
+            PropertyFieldRow(label: "COMPARE_ONAME", value: row.compareOName.isEmpty ? "—" : row.compareOName)
+            PropertyFieldRow(label: "口径", value: row.diameter.isEmpty ? "—" : row.diameter)
+            PropertyFieldRow(label: "标高", value: row.elevation.isEmpty ? "—" : row.elevation)
+        }
+        .padding(.top, 4)
     }
 }
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import OSLog
 #if os(macOS)
 import AppKit
 #else
@@ -7,6 +8,8 @@ import UIKit
 import UniformTypeIdentifiers
 import EPANET3Bridge
 import EPANET3Renderer
+
+private let scadaChartOSLog = Logger(subsystem: "EPANET3App", category: "ScadaChart")
 
 extension Notification.Name {
     /// 在写入撤销/重做快照前发送，使属性面板防抖中的编辑先提交到引擎，避免快照不含最新属性、撤销顺序错乱。
@@ -78,6 +81,28 @@ enum ResultOverlayMode: String, CaseIterable {
 
 // MARK: - Time-series result storage
 
+/// Reusable scratch buffers for bulk C reads, allocated once per simulation run.
+public struct BulkScratch {
+    var nodePres: [Float]
+    var nodeHead: [Float]
+    var nodeDem:  [Float]
+    var nodeTlvl: [Float]
+    var linkFl:   [Float]
+    var linkVel:  [Float]
+    var linkHl:   [Float]
+    var linkSt:   [Float]
+    public init(nodeCount: Int, linkCount: Int) {
+        nodePres = [Float](repeating: 0, count: nodeCount)
+        nodeHead = [Float](repeating: 0, count: nodeCount)
+        nodeDem  = [Float](repeating: 0, count: nodeCount)
+        nodeTlvl = [Float](repeating: 0, count: nodeCount)
+        linkFl   = [Float](repeating: 0, count: linkCount)
+        linkVel  = [Float](repeating: 0, count: linkCount)
+        linkHl   = [Float](repeating: 0, count: linkCount)
+        linkSt   = [Float](repeating: 0, count: linkCount)
+    }
+}
+
 /// Per-hydraulic-timestep results collected during `runCalculation()`.
 /// Arrays are indexed `[stepIndex][objectIndex]`.
 public struct TimeSeriesResultStore {
@@ -91,42 +116,37 @@ public struct TimeSeriesResultStore {
     public var linkHeadloss: [[Float]] = []
     public var linkStatus: [[Float]] = []
 
+    public mutating func reserveCapacity(steps: Int) {
+        timePoints.reserveCapacity(steps)
+        nodePressure.reserveCapacity(steps)
+        nodeHead.reserveCapacity(steps)
+        nodeDemand.reserveCapacity(steps)
+        tankLevel.reserveCapacity(steps)
+        linkFlow.reserveCapacity(steps)
+        linkVelocity.reserveCapacity(steps)
+        linkHeadloss.reserveCapacity(steps)
+        linkStatus.reserveCapacity(steps)
+    }
+
     /// Snapshot current solver state for all nodes/links and append one time row.
-    public mutating func recordStep(time: Int, project: EpanetProject) {
-        guard let nc = try? project.nodeCount(),
-              let lc = try? project.linkCount() else { return }
+    /// C writes directly into the scratch buffers, then we snapshot-copy into the result arrays.
+    public mutating func recordStep(time: Int, project: EpanetProject, scratch: inout BulkScratch) {
         timePoints.append(time)
+        project.getNodeResultsBulkF(
+            pressure: &scratch.nodePres, head: &scratch.nodeHead,
+            demand: &scratch.nodeDem, tankLevel: &scratch.nodeTlvl)
+        nodePressure.append(scratch.nodePres)
+        nodeHead.append(scratch.nodeHead)
+        nodeDemand.append(scratch.nodeDem)
+        tankLevel.append(scratch.nodeTlvl)
 
-        var pres = [Float](); pres.reserveCapacity(nc)
-        var head = [Float](); head.reserveCapacity(nc)
-        var dem  = [Float](); dem.reserveCapacity(nc)
-        var tlvl = [Float](); tlvl.reserveCapacity(nc)
-        for i in 0..<nc {
-            pres.append(Float((try? project.getNodeValue(nodeIndex: i, param: .pressure)) ?? 0))
-            head.append(Float((try? project.getNodeValue(nodeIndex: i, param: .head)) ?? 0))
-            dem.append(Float((try? project.getNodeValue(nodeIndex: i, param: .actualdemand)) ?? 0))
-            let isTank = (try? project.getNodeType(index: i)) == .tank
-            tlvl.append(isTank ? Float((try? project.getNodeValue(nodeIndex: i, param: .tanklevel)) ?? .nan) : .nan)
-        }
-        nodePressure.append(pres)
-        nodeHead.append(head)
-        nodeDemand.append(dem)
-        tankLevel.append(tlvl)
-
-        var fl  = [Float](); fl.reserveCapacity(lc)
-        var vel = [Float](); vel.reserveCapacity(lc)
-        var hl  = [Float](); hl.reserveCapacity(lc)
-        var st  = [Float](); st.reserveCapacity(lc)
-        for i in 0..<lc {
-            fl.append(Float((try? project.getLinkValue(linkIndex: i, param: .flow)) ?? 0))
-            vel.append(Float((try? project.getLinkValue(linkIndex: i, param: .velocity)) ?? 0))
-            hl.append(Float((try? project.getLinkValue(linkIndex: i, param: .headloss)) ?? 0))
-            st.append(Float((try? project.getLinkValue(linkIndex: i, param: .status)) ?? 0))
-        }
-        linkFlow.append(fl)
-        linkVelocity.append(vel)
-        linkHeadloss.append(hl)
-        linkStatus.append(st)
+        project.getLinkResultsBulkF(
+            flow: &scratch.linkFl, velocity: &scratch.linkVel,
+            headloss: &scratch.linkHl, status: &scratch.linkSt)
+        linkFlow.append(scratch.linkFl)
+        linkVelocity.append(scratch.linkVel)
+        linkHeadloss.append(scratch.linkHl)
+        linkStatus.append(scratch.linkSt)
     }
 
     public var stepCount: Int { timePoints.count }
@@ -194,6 +214,21 @@ public enum LinkChartParam: String, CaseIterable, Identifiable {
     public var id: String { rawValue }
 }
 
+/// 底部时序图中 SCADA 导入的实测序列键名（与 `NodeChartParam` / `LinkChartParam` 并列，用于图例与 `chartPanelCurves`）。
+public enum ScadaChartSeriesKey: String, CaseIterable, Identifiable {
+    case measuredPressure = "压力(实测)"
+    case measuredFlow = "流量(实测)"
+    public var id: String { rawValue }
+}
+
+#if os(macOS)
+/// 侧栏「导入监测时序数据」sheet 的 `sheet(item:)` 载荷。
+struct ScadaMonitoringTimeSeriesImportPresentation: Identifiable, Equatable {
+    let kind: ScadaDeviceKind
+    var id: String { "scada-monitoring-ts-\(kind.rawValue)" }
+}
+#endif
+
 /// 底部时序图 Y 轴槽位：Y1 为左侧，Y2 为右侧（双轴时）。
 public enum ChartAxisSlot: Int, CaseIterable, Identifiable, Codable {
     case y1 = 1
@@ -227,7 +262,8 @@ public final class AppState: ObservableObject {
     /// 压力/流量标量数组更新时递增，用于仅刷新标量 GPU 缓冲而不重建几何。
     @Published private(set) var resultScalarRevision: UInt64 = 0
     @Published var project: EpanetProject?
-    @Published var filePath: String?
+    /// 当前打开的 `.inp` 路径；无则 nil（宿主 `EPANET3App` 等需判断菜单是否可用）。
+    @Published public private(set) var filePath: String?
     /// 宿主应用（如 Xcode 内 Mac target）需读取错误信息时要求 `public`。
     @Published public var errorMessage: String?
     @Published var isLoading = false
@@ -246,6 +282,8 @@ public final class AppState: ObservableObject {
     @Published public var timeSeriesResults: TimeSeriesResultStore?
     /// 底部时序图：用户在「计算结果」中选择的曲线及 Y1/Y2；切换选中对象时清空。
     @Published public var chartPanelCurves: [ChartPanelCurve] = []
+    /// 最近一次无法绘制 SCADA 对比图时的可读原因（映射未命中、兜底未匹配等）；成功解析时置 nil。
+    @Published public var scadaChartDiagnosticMessage: String?
     /// 从当前 .inp 的 [OPTIONS] 解析的 Flow Units（如 "GPM", "LPS"），用于属性面板单位标签；nil 表示未解析或非 project 模式。
     @Published var inpFlowUnits: String?
     /// 打开/保存/重载 .inp 时从全文快照解析的 `[OPTIONS]` 摘要；设置页只读此项，避免每次打开设置再读盘。
@@ -290,6 +328,41 @@ public final class AppState: ObservableObject {
     @Published var linkVelocityValues: [Float] = []
     /// 启动页最近打开文件列表（按时间倒序）。
     @Published var recentFiles: [RecentFileItem] = []
+
+    /// 与当前 `.inp` 同名的 `*.scada-mapping.json` 已加载时非空；用于将 SCADA `MODEL` 映射到 EPANET 管段/节点 ID。
+    @Published private(set) var scadaMapping: ScadaMappingConfiguration?
+    /// 当映射 JSON 中配置了设备表文件名且文件存在时，由 `refreshScadaSidecar` 载入。
+    @Published private(set) var scadaDeviceCatalog: ScadaDeviceCatalog?
+    /// 供界面展示的简短状态，例如映射条数、设备表是否载入。
+    @Published private(set) var scadaSidecarSummary: String?
+    /// 已导入的压力设备列表（用于画布 P 标记与侧栏计数）。
+    @Published private(set) var scadaPressureDevices: [ScadaDeviceRow] = []
+    /// 已导入的流量设备列表（用于画布 Q 标记与侧栏计数）。
+    @Published private(set) var scadaFlowDevices: [ScadaDeviceRow] = []
+    /// 监测 CSV 按仿真时间轴 ZOH 重采样后的压力序列（键：SCADA 设备 ID；与 `scadaObservedSeriesTimePointsSeconds` 等长）。
+    @Published private(set) var scadaObservedPressureSeriesByDeviceId: [String: [Float]] = [:]
+    /// 同上，流量。
+    @Published private(set) var scadaObservedFlowSeriesByDeviceId: [String: [Float]] = [:]
+    /// 与监测序列逐点对应的仿真时刻（秒，自仿真起始 0 起）。
+    @Published private(set) var scadaObservedSeriesTimePointsSeconds: [Int] = []
+    /// 最近一次监测导入的简短说明（成功时）。
+    @Published private(set) var scadaMonitoringImportSummary: String?
+    /// 画布上选中的 SCADA 测点（压力/流量）；与 `selectedNodeIndex` / `selectedLinkIndex` 互斥，且优先于管网命中。
+    @Published var selectedScadaDevice: ScadaDeviceSelection?
+    /// 当前选中 SCADA 设备在内存目录中的记录（无则视为失效选中）。
+    var selectedScadaDeviceRow: ScadaDeviceRow? {
+        guard let s = selectedScadaDevice else { return nil }
+        switch s.kind {
+        case .pressure: return scadaPressureDevices.first { $0.id == s.deviceId }
+        case .flow: return scadaFlowDevices.first { $0.id == s.deviceId }
+        }
+    }
+    /// SCADA 导入弹窗（macOS sheet）
+    #if os(macOS)
+    @Published var showScadaImportSheet = false
+    /// 非 nil 时展示「导入监测时序数据」确认对话框（含预览与步长对比）。
+    @Published var scadaMonitoringTimeSeriesImportPresentation: ScadaMonitoringTimeSeriesImportPresentation?
+    #endif
 
     /// 自上次成功保存或重新加载以来，是否存在尚未写入 .inp 的模型修改（关闭/新建/打开前用于提示）。
     @Published public private(set) var hasUnsavedChanges = false
@@ -370,6 +443,17 @@ public final class AppState: ObservableObject {
     public func closeObjectTable() {
         ObjectTableWindowController.shared.closeWindow()
     }
+    /// 侧栏「压力 / 流量」设备对应表独立窗口；nil 表示未打开或已关闭。
+    @Published var scadaDeviceTableWindowKind: ScadaDeviceKind?
+    func openScadaDeviceTableWindow(_ kind: ScadaDeviceKind) {
+        let rows = kind == .pressure ? scadaPressureDevices : scadaFlowDevices
+        guard !rows.isEmpty else { return }
+        scadaDeviceTableWindowKind = kind
+        ScadaDeviceTableWindowController.shared.show(appState: self)
+    }
+    func closeScadaDeviceTableWindow() {
+        ScadaDeviceTableWindowController.shared.closeWindow()
+    }
     /// 侧栏「模式 / 曲线」打开的 .inp 章节详情；nil 表示窗口关闭。
     @Published public var inpSectionDetailKind: InpSectionDetailKind?
     public func openInpSectionDetail(_ kind: InpSectionDetailKind) {
@@ -445,6 +529,7 @@ public final class AppState: ObservableObject {
             selectedLinkID = nil
             selectedNodeIndices = []
             selectedLinkIndices = []
+            selectedScadaDevice = nil
             isPropertyPanelVisible = false
         case .add, .delete:
             selectedNodeIndex = nil
@@ -453,6 +538,7 @@ public final class AppState: ObservableObject {
             selectedLinkID = nil
             selectedNodeIndices = []
             selectedLinkIndices = []
+            selectedScadaDevice = nil
             // D2: 添加/删除模式下打开工具面板。
             isPropertyPanelVisible = true
         case .edit:
@@ -465,6 +551,7 @@ public final class AppState: ObservableObject {
     }
 
     func setSelection(nodeIndex: Int?, linkIndex: Int?, openPanel: Bool = true) {
+        selectedScadaDevice = nil
         let selectionChanged = nodeIndex != selectedNodeIndex || linkIndex != selectedLinkIndex
         if selectionChanged {
             chartPanelCurves.removeAll()
@@ -533,8 +620,325 @@ public final class AppState: ObservableObject {
         }
     }
 
+    /// 选中 SCADA 测点：清空管网单选/多选，属性面板展示设备字段。
+    func selectScadaDevice(_ selection: ScadaDeviceSelection) {
+        chartPanelCurves.removeAll()
+        scadaChartDiagnosticMessage = nil
+        selectedNodeIndex = nil
+        selectedLinkIndex = nil
+        selectedNodeIndices = []
+        selectedLinkIndices = []
+        selectedNodeID = nil
+        selectedLinkID = nil
+        selectedScadaDevice = selection
+        if editorMode != .add && editorMode != .delete {
+            editorMode = .edit
+        }
+        isPropertyPanelVisible = true
+        seedScadaChartPanelCurvesIfPossible()
+        if chartPanelCurves.isEmpty, let bundle = scadaComparisonChartSeriesIfAvailable() {
+            let inferred = inferredDefaultScadaChartPanelCurves(seriesByParamKeys: Set(bundle.seriesByParam.keys))
+            if !inferred.isEmpty { chartPanelCurves = inferred }
+        }
+        syncScadaChartDiagnosticFromResolve()
+    }
+
+    /// 已运行计算且能将压力/流量设备关联到结点或管段时：底部图至少显示仿真曲线；若已导入并对齐监测数据则 Y1=实测、Y2=仿真。
+    private func seedScadaChartPanelCurvesIfPossible() {
+        guard let sel = selectedScadaDevice,
+              let store = timeSeriesResults, store.stepCount >= 1,
+              let proj = project,
+              let chart = scadaResolvedChartBasis(selection: sel, store: store, mapping: scadaMapping, project: proj) else { return }
+        let obsAligned = alignedScadaMonitoringTrimmed(
+            store: store, deviceId: sel.deviceId, kind: sel.kind, timePointCount: chart.timePoints.count
+        )
+        let obsOk = obsAligned.map { $0.count == chart.timePoints.count } ?? false
+        switch sel.kind {
+        case .pressure:
+            if obsOk, obsAligned != nil {
+                chartPanelCurves = [
+                    ChartPanelCurve(paramKey: ScadaChartSeriesKey.measuredPressure.rawValue, axis: .y1),
+                    ChartPanelCurve(paramKey: NodeChartParam.pressure.rawValue, axis: .y2),
+                ]
+            } else {
+                chartPanelCurves = [
+                    ChartPanelCurve(paramKey: NodeChartParam.pressure.rawValue, axis: .y1),
+                ]
+            }
+        case .flow:
+            if obsOk, obsAligned != nil {
+                chartPanelCurves = [
+                    ChartPanelCurve(paramKey: ScadaChartSeriesKey.measuredFlow.rawValue, axis: .y1),
+                    ChartPanelCurve(paramKey: LinkChartParam.flow.rawValue, axis: .y2),
+                ]
+            } else {
+                chartPanelCurves = [
+                    ChartPanelCurve(paramKey: LinkChartParam.flow.rawValue, axis: .y1),
+                ]
+            }
+        }
+    }
+
+    /// 解析映射、取出仿真序列，并与时间轴截断到同一长度（避免极少数情况下记录步数与 `timePoints` 不一致）。
+    private struct ScadaResolvedChartBasis {
+        let timePoints: [Int]
+        let pressureSim: [Float]?
+        let flowSim: [Float]?
+    }
+
+    /// 纯计算，**不得**写入任何 `@Published`（否则在 SwiftUI `body` 中每帧调用会触发无限重绘/卡死）。
+    private func scadaResolveChartBasisInner(
+        selection: ScadaDeviceSelection,
+        store: TimeSeriesResultStore,
+        mapping: ScadaMappingConfiguration?,
+        project proj: EpanetProject
+    ) -> (basis: ScadaResolvedChartBasis?, failureMessage: String?) {
+        let tp0 = store.timePoints
+        guard !tp0.isEmpty else {
+            scadaChartOSLog.debug("SCADA: empty timePoints")
+            return (nil, "无时序时间点（请先完成水力计算）。")
+        }
+        switch selection.kind {
+        case .pressure:
+            var ni: Int?
+            if let mapping {
+                let nid: String? = {
+                    if let row = selectedScadaDeviceRow { return row.resolvedEpanetNodeIdWithIdFallback(mapping: mapping) }
+                    return mapping.resolvedEpanetNodeId(forPressureModel: selection.deviceId)
+                }()
+                if let nid, let ix = try? proj.getNodeIndex(id: nid), ix >= 0 {
+                    ni = ix
+                    scadaChartOSLog.debug("SCADA pressure: mapping → node id \(nid) index \(ix)")
+                }
+            } else {
+                scadaChartOSLog.debug("SCADA pressure: no .scada-mapping.json, try ID match only")
+            }
+            if ni == nil {
+                ni = scadaFallbackPressureNodeIndex(selection: selection, project: proj)
+                if ni != nil {
+                    scadaChartOSLog.debug("SCADA pressure: fallback ID match index \(ni!)")
+                }
+            }
+            guard let nodeI = ni,
+                  var sim = store.nodeTimeSeries(nodeIndex: nodeI, param: .pressure), !sim.isEmpty else {
+                scadaChartOSLog.warning("SCADA pressure: resolve failed for device \(selection.deviceId)")
+                return (nil, "压力：侧车映射未命中且未找到与 MODEL / 设备 ID / 对比名 相同的结点 ID。请在映射 JSON 中配置，或使设备表 MODEL 与 INP 结点 ID 一致。")
+            }
+            let n = min(sim.count, tp0.count)
+            guard n > 0 else { return (nil, "压力：仿真序列为空。") }
+            if sim.count != tp0.count { sim = Array(sim.prefix(n)) }
+            let tp = Array(tp0.prefix(n))
+            return (ScadaResolvedChartBasis(timePoints: tp, pressureSim: sim, flowSim: nil), nil)
+        case .flow:
+            var li: Int?
+            if let mapping {
+                let lid: String? = {
+                    if let row = selectedScadaDeviceRow { return row.resolvedEpanetLinkIdWithIdFallback(mapping: mapping) }
+                    return mapping.resolvedEpanetLinkId(forFlowModel: selection.deviceId)
+                }()
+                if let lid, let ix = try? proj.getLinkIndex(id: lid), ix >= 0 {
+                    li = ix
+                    scadaChartOSLog.debug("SCADA flow: mapping → link id \(lid) index \(ix)")
+                }
+            } else {
+                scadaChartOSLog.debug("SCADA flow: no mapping file, try ID match only")
+            }
+            if li == nil {
+                li = scadaFallbackFlowLinkIndex(selection: selection, project: proj)
+                if li != nil {
+                    scadaChartOSLog.debug("SCADA flow: fallback ID match index \(li!)")
+                }
+            }
+            guard let linkI = li,
+                  var sim = store.linkTimeSeries(linkIndex: linkI, param: .flow), !sim.isEmpty else {
+                scadaChartOSLog.warning("SCADA flow: resolve failed for device \(selection.deviceId)")
+                return (nil, "流量：侧车映射未命中且未找到与 MODEL / 设备 ID / 对比名 相同的管段 ID。请在映射 JSON 中配置，或使设备表 MODEL 与 INP 管段 ID 一致。")
+            }
+            let n = min(sim.count, tp0.count)
+            guard n > 0 else { return (nil, "流量：仿真序列为空。") }
+            if sim.count != tp0.count { sim = Array(sim.prefix(n)) }
+            let tp = Array(tp0.prefix(n))
+            return (ScadaResolvedChartBasis(timePoints: tp, pressureSim: nil, flowSim: sim), nil)
+        }
+    }
+
+    private func scadaResolvedChartBasis(
+        selection: ScadaDeviceSelection,
+        store: TimeSeriesResultStore,
+        mapping: ScadaMappingConfiguration?,
+        project proj: EpanetProject
+    ) -> ScadaResolvedChartBasis? {
+        scadaResolveChartBasisInner(selection: selection, store: store, mapping: mapping, project: proj).basis
+    }
+
+    /// 在选中 / 重算曲线等**非 View 绘制路径**调用，把解析失败原因写入 `scadaChartDiagnosticMessage`。
+    private func syncScadaChartDiagnosticFromResolve() {
+        guard let sel = selectedScadaDevice,
+              let store = timeSeriesResults, store.stepCount >= 1,
+              let proj = project else {
+            scadaChartDiagnosticMessage = nil
+            return
+        }
+        let (_, fail) = scadaResolveChartBasisInner(selection: sel, store: store, mapping: scadaMapping, project: proj)
+        scadaChartDiagnosticMessage = fail
+    }
+
+    /// 无映射或映射未命中时：用设备 MODEL、设备 ID、`COMPARE_ONAME`（别名）与 INP 结点 ID 做不区分大小写匹配。
+    private func scadaFallbackPressureNodeIndex(selection: ScadaDeviceSelection, project proj: EpanetProject) -> Int? {
+        let row = selectedScadaDeviceRow
+        var candidates: [String] = []
+        if let m = row?.model.trimmingCharacters(in: .whitespacesAndNewlines), !m.isEmpty { candidates.append(m) }
+        let did = selection.deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !did.isEmpty { candidates.append(did) }
+        if let o = row?.compareOName.trimmingCharacters(in: .whitespacesAndNewlines), !o.isEmpty, o.count <= 128 {
+            candidates.append(o)
+        }
+        var seen = Set<String>()
+        let uniq = candidates.filter { seen.insert($0).inserted }
+        guard let nc = try? proj.nodeCount() else { return nil }
+        for i in 0..<nc {
+            guard let id = try? proj.getNodeId(index: i) else { continue }
+            let tid = id.trimmingCharacters(in: .whitespacesAndNewlines)
+            for c in uniq where tid == c || tid.caseInsensitiveCompare(c) == .orderedSame {
+                return i
+            }
+        }
+        return nil
+    }
+
+    private func scadaFallbackFlowLinkIndex(selection: ScadaDeviceSelection, project proj: EpanetProject) -> Int? {
+        let row = selectedScadaDeviceRow
+        var candidates: [String] = []
+        if let m = row?.model.trimmingCharacters(in: .whitespacesAndNewlines), !m.isEmpty { candidates.append(m) }
+        let did = selection.deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !did.isEmpty { candidates.append(did) }
+        if let o = row?.compareOName.trimmingCharacters(in: .whitespacesAndNewlines), !o.isEmpty, o.count <= 128 {
+            candidates.append(o)
+        }
+        var seen = Set<String>()
+        let uniq = candidates.filter { seen.insert($0).inserted }
+        guard let lc = try? proj.linkCount() else { return nil }
+        for i in 0..<lc {
+            guard let id = try? proj.getLinkId(index: i) else { continue }
+            let tid = id.trimmingCharacters(in: .whitespacesAndNewlines)
+            for c in uniq where tid == c || tid.caseInsensitiveCompare(c) == .orderedSame {
+                return i
+            }
+        }
+        return nil
+    }
+
+    /// 将监测对齐到**完整** `store.timePoints` 后再截断到与仿真相同的步数（与 `scadaResolvedChartBasis` 一致）。
+    private func alignedScadaMonitoringTrimmed(
+        store: TimeSeriesResultStore,
+        deviceId: String,
+        kind: ScadaDeviceKind,
+        timePointCount: Int
+    ) -> [Float]? {
+        guard let full = alignedScadaMonitoringForDevice(store: store, deviceId: deviceId, kind: kind),
+              full.count >= timePointCount, timePointCount > 0 else { return nil }
+        if full.count == timePointCount { return full }
+        return Array(full.prefix(timePointCount))
+    }
+
+    /// 若该设备有导入的监测序列且能对齐到当前 `store.timePoints`，返回对齐后的 `[Float]`，否则 `nil`。
+    private func alignedScadaMonitoringForDevice(store: TimeSeriesResultStore, deviceId: String, kind: ScadaDeviceKind) -> [Float]? {
+        switch kind {
+        case .pressure:
+            guard let raw = scadaObservedPressureSeriesByDeviceId[deviceId], !raw.isEmpty else { return nil }
+            return alignImportedMonitoringToStoreTimePoints(store: store, raw: raw)
+        case .flow:
+            guard let raw = scadaObservedFlowSeriesByDeviceId[deviceId], !raw.isEmpty else { return nil }
+            return alignImportedMonitoringToStoreTimePoints(store: store, raw: raw)
+        }
+    }
+
+    /// 将导入时按 `scadaObservedSeriesTimePointsSeconds` 排列的监测值，按**时刻**对齐到当前 `store.timePoints`（与导入时步长/点数可不一致）。
+    private func alignImportedMonitoringToStoreTimePoints(store: TimeSeriesResultStore, raw: [Float]) -> [Float]? {
+        let tp = store.timePoints
+        guard !tp.isEmpty, !raw.isEmpty else { return nil }
+        let src = scadaObservedSeriesTimePointsSeconds
+        guard !src.isEmpty else { return nil }
+        if raw.count == src.count, src.elementsEqual(tp) {
+            return raw
+        }
+        return ScadaMonitoringAlignment.zohAlignSeriesToTargetTimes(values: raw, sourceTimes: src, targetTimes: tp)
+    }
+
+    /// 选中 SCADA 且具备仿真时序时供底部图使用。**纯读取，不修改 `@Published`**（避免 SwiftUI 绘制阶段死循环）。
+    func scadaComparisonChartSeriesIfAvailable() -> (timePoints: [Int], seriesByParam: [String: [Float]])? {
+        guard let sel = selectedScadaDevice,
+              let store = timeSeriesResults, store.stepCount >= 1,
+              let proj = project else {
+            return nil
+        }
+        let (basis, _) = scadaResolveChartBasisInner(selection: sel, store: store, mapping: scadaMapping, project: proj)
+        guard let basis else {
+            return nil
+        }
+        let tp = basis.timePoints
+        switch sel.kind {
+        case .pressure:
+            guard let sim = basis.pressureSim else { return nil }
+            var m: [String: [Float]] = [NodeChartParam.pressure.rawValue: sim]
+            if let obs = alignedScadaMonitoringTrimmed(
+                store: store, deviceId: sel.deviceId, kind: .pressure, timePointCount: tp.count
+            ), obs.count == tp.count {
+                m[ScadaChartSeriesKey.measuredPressure.rawValue] = obs
+            }
+            return (tp, m)
+        case .flow:
+            guard let sim = basis.flowSim else { return nil }
+            var m: [String: [Float]] = [LinkChartParam.flow.rawValue: sim]
+            if let obs = alignedScadaMonitoringTrimmed(
+                store: store, deviceId: sel.deviceId, kind: .flow, timePointCount: tp.count
+            ), obs.count == tp.count {
+                m[ScadaChartSeriesKey.measuredFlow.rawValue] = obs
+            }
+            return (tp, m)
+        }
+    }
+
+    /// 供界面在出现时或时序结果更新后再次填充曲线（避免首次选中时 `timeSeriesResults` 尚未就绪）。
+    func reseedScadaChartPanelWhenScadaSelected() {
+        guard selectedScadaDevice != nil else { return }
+        seedScadaChartPanelCurvesIfPossible()
+        if chartPanelCurves.isEmpty, let bundle = scadaComparisonChartSeriesIfAvailable() {
+            let inferred = inferredDefaultScadaChartPanelCurves(seriesByParamKeys: Set(bundle.seriesByParam.keys))
+            if !inferred.isEmpty {
+                chartPanelCurves = inferred
+            }
+        }
+        syncScadaChartDiagnosticFromResolve()
+    }
+
+    /// 当 `chartPanelCurves` 尚未写入时，根据序列键推断默认 Y1/Y2（实测/仿真）。
+    public func inferredDefaultScadaChartPanelCurves(seriesByParamKeys keys: Set<String>) -> [ChartPanelCurve] {
+        let mp = ScadaChartSeriesKey.measuredPressure.rawValue
+        let mf = ScadaChartSeriesKey.measuredFlow.rawValue
+        let p = NodeChartParam.pressure.rawValue
+        let f = LinkChartParam.flow.rawValue
+        if keys.contains(mp), keys.contains(p) {
+            return [
+                ChartPanelCurve(paramKey: mp, axis: .y1),
+                ChartPanelCurve(paramKey: p, axis: .y2),
+            ]
+        }
+        if keys.contains(mf), keys.contains(f) {
+            return [
+                ChartPanelCurve(paramKey: mf, axis: .y1),
+                ChartPanelCurve(paramKey: f, axis: .y2),
+            ]
+        }
+        if keys.contains(p) { return [ChartPanelCurve(paramKey: p, axis: .y1)] }
+        if keys.contains(f) { return [ChartPanelCurve(paramKey: f, axis: .y1)] }
+        return []
+    }
+
     func clearSelection(closePanel: Bool = true) {
         chartPanelCurves.removeAll()
+        scadaChartDiagnosticMessage = nil
+        selectedScadaDevice = nil
         selectedNodeIndex = nil
         selectedLinkIndex = nil
         selectedNodeID = nil
@@ -608,6 +1012,7 @@ public final class AppState: ObservableObject {
     }
 
     func setMarqueeSelection(nodes: Set<Int>, links: Set<Int>, openPanel: Bool = true) {
+        selectedScadaDevice = nil
         selectedNodeIndices = nodes
         selectedLinkIndices = links
         let total = nodes.count + links.count
@@ -710,6 +1115,7 @@ public final class AppState: ObservableObject {
 
         let previousNodeID = selectedNodeID
         let previousLinkID = selectedLinkID
+        let previousScadaDevice = selectedScadaDevice
         let previousPanelVisible = isPropertyPanelVisible
         let previousNodeIDs: Set<String> = Set(selectedNodeIndices.compactMap { try? p.getNodeId(index: $0) })
         let previousLinkIDs: Set<String> = Set(selectedLinkIndices.compactMap { try? p.getLinkId(index: $0) })
@@ -730,7 +1136,9 @@ public final class AppState: ObservableObject {
                     selectedNodeID = previousNodeID
                     selectedLinkID = previousLinkID
                     syncSelectionIndicesFromIDs()
-                    isPropertyPanelVisible = previousPanelVisible && ((selectedNodeIndex != nil) || (selectedLinkIndex != nil))
+                    let hasNetworkPick = (selectedNodeIndex != nil) || (selectedLinkIndex != nil)
+                    let hasScadaPick = previousScadaDevice != nil && selectedScadaDevice != nil
+                    isPropertyPanelVisible = previousPanelVisible && (hasNetworkPick || hasScadaPick)
                 }
             } else {
                 clearSelection()
@@ -1876,6 +2284,7 @@ public final class AppState: ObservableObject {
         isTopologyEditingEnabled = false
         lastLoadAndRenderElapsedSeconds = nil
         bumpCanvasViewportFitReset()
+        clearScadaSidecarState()
         #if os(macOS)
         objectTableSheetKind = nil
         ObjectTableWindowController.shared.closeWindow()
@@ -1953,6 +2362,7 @@ public final class AppState: ObservableObject {
         isTopologyEditingEnabled = false
         lastLoadAndRenderElapsedSeconds = nil
         bumpCanvasViewportFitReset()
+        clearScadaSidecarState()
         #if os(macOS)
         macDismissRightSidebarNonce &+= 1
         objectTableSheetKind = nil
@@ -2040,6 +2450,7 @@ public final class AppState: ObservableObject {
                 try writeProjectToPath(url.path)
                 filePath = url.path
                 errorMessage = nil
+                refreshScadaSidecar(forInpPath: url.path)
             } catch let error as EpanetError {
                 errorMessage = Self.formatLocalizedEpanetError(error, scene: "另存为失败")
             } catch {
@@ -2106,10 +2517,273 @@ public final class AppState: ObservableObject {
     }
     #endif
 
+    // MARK: - SCADA 侧车（*.scada-mapping.json + 可选设备表 CSV）
+
+    private func clearScadaSidecarState() {
+        scadaMapping = nil
+        scadaDeviceCatalog = nil
+        scadaSidecarSummary = nil
+        scadaPressureDevices = []
+        scadaFlowDevices = []
+        selectedScadaDevice = nil
+        clearScadaObservedMonitoringSeries()
+        #if os(macOS)
+        scadaDeviceTableWindowKind = nil
+        ScadaDeviceTableWindowController.shared.closeWindow()
+        #endif
+    }
+
+    private func clearScadaObservedMonitoringSeries() {
+        scadaObservedPressureSeriesByDeviceId = [:]
+        scadaObservedFlowSeriesByDeviceId = [:]
+        scadaObservedSeriesTimePointsSeconds = []
+        scadaMonitoringImportSummary = nil
+    }
+
+    /// 从当前 `filePath` 重新读取映射与设备表（编辑侧车文件后可调用）。
+    func reloadScadaSidecarFromDisk() {
+        guard let path = filePath, !path.isEmpty else {
+            clearScadaSidecarState()
+            return
+        }
+        refreshScadaSidecar(forInpPath: path)
+    }
+
+    private func refreshScadaSidecar(forInpPath inpPath: String) {
+        let inpURL = URL(fileURLWithPath: inpPath)
+        let mapURL = ScadaMappingConfiguration.defaultURL(forInpURL: inpURL)
+        guard FileManager.default.fileExists(atPath: mapURL.path) else {
+            clearScadaSidecarState()
+            return
+        }
+        do {
+            let mapping = try ScadaMappingConfiguration.load(from: mapURL)
+            scadaMapping = mapping
+            let nf = mapping.epanetLinkIdByFlowModelId.count
+            let np = mapping.epanetNodeIdByPressureModelId.count
+            var parts: [String] = ["管段映射 \(nf) 条 · 节点映射 \(np) 条"]
+            var catalog: ScadaDeviceCatalog?
+            let dir = inpURL.deletingLastPathComponent()
+            var flowU: URL?
+            var presU: URL?
+            if let fn = mapping.flowDeviceCSVFileName?.trimmingCharacters(in: .whitespacesAndNewlines), !fn.isEmpty {
+                let u = dir.appendingPathComponent(fn)
+                if FileManager.default.fileExists(atPath: u.path) { flowU = u }
+            }
+            if let pn = mapping.pressureDeviceCSVFileName?.trimmingCharacters(in: .whitespacesAndNewlines), !pn.isEmpty {
+                let u = dir.appendingPathComponent(pn)
+                if FileManager.default.fileExists(atPath: u.path) { presU = u }
+            }
+            if flowU != nil || presU != nil {
+                do {
+                    catalog = try ScadaCSVImporter.loadDeviceCatalogFromOptionalFiles(flowDeviceURL: flowU, pressureDeviceURL: presU)
+                    let total = (catalog?.flowByDeviceId.count ?? 0) + (catalog?.pressureByDeviceId.count ?? 0)
+                    parts.append("设备目录 \(total) 条")
+                } catch {
+                    parts.append("设备表解析失败: \(error.localizedDescription)")
+                }
+            } else {
+                let wf = mapping.flowDeviceCSVFileName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let wp = mapping.pressureDeviceCSVFileName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !wf.isEmpty || !wp.isEmpty {
+                    parts.append("设备表文件未找到（与 .inp 同目录）")
+                }
+            }
+            scadaDeviceCatalog = catalog
+            scadaPressureDevices = catalog.map { Array($0.pressureByDeviceId.values) } ?? []
+            scadaFlowDevices = catalog.map { Array($0.flowByDeviceId.values) } ?? []
+            scadaSidecarSummary = parts.joined(separator: " · ")
+            if let s = selectedScadaDevice {
+                let ok: Bool = {
+                    switch s.kind {
+                    case .pressure: return scadaPressureDevices.contains { $0.id == s.deviceId }
+                    case .flow: return scadaFlowDevices.contains { $0.id == s.deviceId }
+                    }
+                }()
+                if !ok { selectedScadaDevice = nil }
+            }
+        } catch {
+            clearScadaSidecarState()
+            scadaSidecarSummary = "SCADA 映射加载失败: \(error.localizedDescription)"
+        }
+    }
+
+    /// 将当前内存中的 `scadaMapping` 写回与 `.inp` 同目录的侧车文件（若 `scadaMapping` 为 nil 则不写入）。
+    func saveScadaMappingSidecar() throws {
+        guard let inp = filePath, !inp.isEmpty, let mapping = scadaMapping else { return }
+        let url = ScadaMappingConfiguration.defaultURL(forInpURL: URL(fileURLWithPath: inp))
+        try mapping.save(to: url)
+    }
+
+    #if os(macOS)
+    /// 文件菜单「导入 › SCADA…」：弹出 SwiftUI sheet（带压力/流量两个标签页）。
+    public func importScadaDeviceCSVsMac() {
+        guard filePath != nil, !(filePath?.isEmpty ?? true) else {
+            errorMessage = "请先打开管网文件（.inp），再导入 SCADA 设备表。"
+            return
+        }
+        showScadaImportSheet = true
+    }
+
+    /// 由 SCADA 导入 sheet 在选好文件后调用。
+    func commitScadaImport(pressureCSVURL: URL?, flowCSVURL: URL?) {
+        guard let inp = filePath, !inp.isEmpty else { return }
+        let inpURL = URL(fileURLWithPath: inp)
+        let inpDir = inpURL.deletingLastPathComponent()
+        do {
+            let mapURL = ScadaMappingConfiguration.defaultURL(forInpURL: inpURL)
+            var cfg = ScadaMappingConfiguration()
+            if FileManager.default.fileExists(atPath: mapURL.path) {
+                cfg = try ScadaMappingConfiguration.load(from: mapURL)
+            }
+            if let src = pressureCSVURL {
+                let dest = try copyImportedCSVToInpDirectory(src, inpDirectory: inpDir)
+                cfg.pressureDeviceCSVFileName = dest.lastPathComponent
+            }
+            if let src = flowCSVURL {
+                let dest = try copyImportedCSVToInpDirectory(src, inpDirectory: inpDir)
+                cfg.flowDeviceCSVFileName = dest.lastPathComponent
+            }
+            try cfg.save(to: mapURL)
+            errorMessage = nil
+            refreshScadaSidecar(forInpPath: inp)
+        } catch {
+            errorMessage = "导入 SCADA 失败: \(error.localizedDescription)"
+        }
+    }
+
+    private func copyImportedCSVToInpDirectory(_ source: URL, inpDirectory: URL) throws -> URL {
+        let dest = inpDirectory.appendingPathComponent(source.lastPathComponent)
+        let srcPath = source.standardizedFileURL.path
+        let dstPath = dest.standardizedFileURL.path
+        if srcPath == dstPath { return dest }
+        if FileManager.default.fileExists(atPath: dstPath) {
+            try FileManager.default.removeItem(at: dest)
+        }
+        try FileManager.default.copyItem(at: source, to: dest)
+        return dest
+    }
+
+    /// 侧栏「压力」「流量」行右键：打开「导入监测时序数据」对话框（预览、步长对比后再确认）。
+    func importScadaMonitoringTimeSeriesMac(kind: ScadaDeviceKind) {
+        guard let inp = filePath, !inp.isEmpty else {
+            errorMessage = "请先打开管网文件（.inp）。"
+            return
+        }
+        guard project != nil else {
+            errorMessage = "请先加载有效工程。"
+            return
+        }
+        scadaMonitoringTimeSeriesImportPresentation = ScadaMonitoringTimeSeriesImportPresentation(kind: kind)
+    }
+
+    /// 由「导入监测时序数据」对话框在确认后调用。
+    func commitScadaMonitoringTimeSeriesImport(fileURL: URL, kind: ScadaDeviceKind) {
+        let accessed = fileURL.startAccessingSecurityScopedResource()
+        defer { if accessed { fileURL.stopAccessingSecurityScopedResource() } }
+        do {
+            try applyMonitoringTimeSeriesImport(fileURL: fileURL, kind: kind)
+            errorMessage = nil
+            scadaMonitoringTimeSeriesImportPresentation = nil
+        } catch {
+            errorMessage = "导入监测数据失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func applyMonitoringTimeSeriesImport(fileURL: URL, kind: ScadaDeviceKind) throws {
+        let rows = try ScadaCSVImporter.loadTimeSeries(url: fileURL)
+        let filtered = rows.filter { row in
+            switch kind {
+            case .pressure: return ScadaCSVImporter.scadaRowMatchesPressureImport(row.scadaType)
+            case .flow: return ScadaCSVImporter.scadaRowMatchesFlowImport(row.scadaType)
+            }
+        }
+        guard !filtered.isEmpty else {
+            throw NSError(
+                domain: "ScadaMonitoring",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "文件中没有与「\(kind == .pressure ? "压力" : "流量")」匹配的 scadaType 行。"]
+            )
+        }
+        let calendar = Calendar.current
+        guard let minDate = filtered.map(\.time).min() else {
+            throw NSError(domain: "ScadaMonitoring", code: 3, userInfo: [NSLocalizedDescriptionKey: "无效数据"])
+        }
+        let dayStart = calendar.startOfDay(for: minDate)
+        let targetSeconds = try resolveMonitoringTargetTimePointsSeconds()
+
+        let catalog = scadaDeviceCatalog
+        var byId: [String: [ScadaTimeSeriesRow]] = [:]
+        for r in filtered {
+            byId[r.scadaID, default: []].append(r)
+        }
+
+        var newPressure = scadaObservedPressureSeriesByDeviceId
+        var newFlow = scadaObservedFlowSeriesByDeviceId
+
+        for (id, seriesRows) in byId {
+            var samples: [(Int, Double)] = []
+            for r in seriesRows {
+                let sec = Int(r.time.timeIntervalSince(dayStart).rounded())
+                let raw = r.value
+                let cal: Double
+                if let cat = catalog {
+                    let dev: ScadaDeviceRow?
+                    switch kind {
+                    case .pressure: dev = cat.pressureByDeviceId[id]
+                    case .flow: dev = cat.flowByDeviceId[id]
+                    }
+                    cal = dev?.calibratedValue(raw) ?? raw
+                } else {
+                    cal = raw
+                }
+                samples.append((sec, cal))
+            }
+            let deduped = ScadaMonitoringAlignment.dedupeSameSecondSorted(samples)
+            let resampled = ScadaMonitoringAlignment.zohResampleToSimulationSeconds(targetSeconds: targetSeconds, samples: deduped)
+            switch kind {
+            case .pressure: newPressure[id] = resampled
+            case .flow: newFlow[id] = resampled
+            }
+        }
+
+        scadaObservedSeriesTimePointsSeconds = targetSeconds
+        switch kind {
+        case .pressure: scadaObservedPressureSeriesByDeviceId = newPressure
+        case .flow: scadaObservedFlowSeriesByDeviceId = newFlow
+        }
+        let label = kind == .pressure ? "压力" : "流量"
+        scadaMonitoringImportSummary = "「\(label)」监测：\(byId.count) 个设备 · \(filtered.count) 行 → \(targetSeconds.count) 个仿真时刻（按时间 ZOH）"
+        if selectedScadaDevice?.kind == kind {
+            seedScadaChartPanelCurvesIfPossible()
+        }
+    }
+
+    private func resolveMonitoringTargetTimePointsSeconds() throws -> [Int] {
+        if let ts = timeSeriesResults, ts.stepCount > 0, !ts.timePoints.isEmpty {
+            return ts.timePoints
+        }
+        guard let proj = project else {
+            throw NSError(domain: "ScadaMonitoring", code: 4, userInfo: [NSLocalizedDescriptionKey: "内部错误：无工程"])
+        }
+        let dur = (try? proj.getTimeParam(param: .duration)) ?? 0
+        guard dur > 0 else {
+            throw NSError(
+                domain: "ScadaMonitoring",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "请先在 [OPTIONS] 中设置 DURATION，或先运行计算以生成时间轴。"]
+            )
+        }
+        let hyd = max(1, (try? proj.getTimeParam(param: .hydStep)) ?? 3600)
+        return Self.discreteSimulationTimePoints(duration: dur, step: hyd)
+    }
+    #endif
+
     func load(path: String) {
         isLoading = true
         errorMessage = nil
         inpSourceSnapshot = nil
+        clearScadaSidecarState()
         cachedInpOptionsHints = nil
         inpPendingSaveDelta.clear()
         lastLoadAndRenderElapsedSeconds = nil
@@ -2163,6 +2837,7 @@ public final class AppState: ObservableObject {
                     self?.linkVelocityValues = []
                     self?.refreshSceneFromProject(preserveSelection: false, sceneLabel: "加载 .inp")
                     self?.recordRecentFile(path: pathCopy, nodeCount: nodeCount, linkCount: linkCount)
+                    self?.refreshScadaSidecar(forInpPath: pathCopy)
                     self?.lastLoadAndRenderElapsedSeconds = CFAbsoluteTimeGetCurrent() - loadWallClockStart
                     self?.isLoading = false
                     self?.activeCanvasPlacementTool = nil
@@ -2217,6 +2892,7 @@ public final class AppState: ObservableObject {
                         self?.linkFlowValues = []
                         self?.linkVelocityValues = []
                         self?.recordRecentFile(path: pathCopy, nodeCount: scene.nodes.count, linkCount: scene.links.count)
+                        self?.refreshScadaSidecar(forInpPath: pathCopy)
                         self?.lastLoadAndRenderElapsedSeconds = CFAbsoluteTimeGetCurrent() - loadWallClockStart
                         self?.isLoading = false
                         self?.activeCanvasPlacementTool = nil
@@ -2293,13 +2969,19 @@ public final class AppState: ObservableObject {
                 loadedProject = proj
                 try proj.load(path: inpPath)
                 try proj.initSolver(initFlows: false)
+                let nc = try proj.nodeCount()
+                let lc = try proj.linkCount()
+                let estDuration = (try? proj.getTimeParam(param: .duration)) ?? 86400
+                let estStep = max(1, (try? proj.getTimeParam(param: .hydStep)) ?? 3600)
+                let estSteps = estDuration / estStep + 2
                 var tsStore = TimeSeriesResultStore()
+                tsStore.reserveCapacity(steps: estSteps)
+                var scratch = BulkScratch(nodeCount: nc, linkCount: lc)
                 var t: Int32 = 0
                 var dt: Int32 = 0
-                // 与 epanet3.cpp EN_runEpanet 一致：以 advance 返回的步长判断，不可用 runSolver 的 t（首轮 t 为 0 会误退出）。
                 repeat {
                     try proj.runSolver(time: &t)
-                    tsStore.recordStep(time: Int(t), project: proj)
+                    tsStore.recordStep(time: Int(t), project: proj, scratch: &scratch)
                     dt = 0
                     try proj.advanceSolver(dt: &dt)
                 } while dt > 0
@@ -2329,6 +3011,8 @@ public final class AppState: ObservableObject {
                     self?.refreshSceneFromProject(preserveSelection: true, sceneLabel: "计算完成后刷新")
                     self?.applyResultScalarsForCurrentPlayhead()
                     self?.seedDefaultChartPanelCurvesIfPossible()
+                    // 保留已导入的监测时序；`alignImportedMonitoringToStoreTimePoints` 会在绘图时按本次 `timeSeriesResults.timePoints` 再对齐（含步长/点数变化）。
+                    self?.reseedScadaChartPanelWhenScadaSelected()
                     self?.isRunning = false
                 }
             } catch let error as EpanetError {

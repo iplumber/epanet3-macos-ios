@@ -86,6 +86,8 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
         var onSelect: ((Int?, Int?) -> Void)?
         /// 画布布线命令：返回 true 表示已消费主键按下（不进入空白拖曳平移、也不在 mouseUp 时清除选中）。
         var onPlacementPrimaryClick: ((CGPoint, CGSize) -> Bool)?
+        /// SCADA 等叠层：先于管网 `hitTest`；返回 true 表示已消费（与 `onPlacementPrimaryClick` 同属「优先拾取」）。
+        var onPriorityPick: ((CGPoint, CGSize) -> Bool)?
         var lineBuffer: MTLBuffer?
         var pointBuffer: MTLBuffer?
         var lineScalarBuffer: MTLBuffer?
@@ -1244,6 +1246,7 @@ public final class MetalNetworkCoordinator: NSObject, MTKViewDelegate {
             let loc = recognizer.location(in: uv)
             let sz = uv.bounds.size
             if let ph = onPlacementPrimaryClick, ph(loc, sz) { return }
+            if let pp = onPriorityPick, pp(loc, sz) { return }
             let (node, link) = hitTest(viewPoint: loc, viewSize: sz)
             onSelect?(node, link)
         }
@@ -1424,6 +1427,11 @@ final class ScrollableContainerView: NSView {
                 mouseDownWasOnEmpty = false
                 return
             }
+            if let pp = coordinator?.onPriorityPick, pp(loc, size) {
+                placementConsumedLastMouseDown = true
+                mouseDownWasOnEmpty = false
+                return
+            }
             let (node, link) = coordinator?.hitTest(viewPoint: loc, viewSize: size) ?? (nil, nil)
             if node != nil || link != nil {
                 coordinator?.onSelect?(node, link)
@@ -1538,6 +1546,8 @@ public struct MetalNetworkView: NSViewRepresentable {
     let onSelect: ((Int?, Int?) -> Void)?
     let onDrawableSizeChange: ((CGSize) -> Void)?
     let onPlacementPrimaryClick: ((MetalNetworkCoordinator, CGPoint, CGSize) -> Bool)?
+    /// SCADA 等叠层先于管网命中；返回 true 表示已选中并消费点击。
+    let onPriorityPick: ((CGPoint, CGSize) -> Bool)?
     /// 绘制管段/阀门/水泵时，鼠标落在可命中节点上显示十字光标（与 `hitTest` 热区一致）。
     let linkPlacementSnapCursor: Bool
     /// macOS：线类连续绘制时右键结束当前链；返回 true 表示已消费右键。
@@ -1579,6 +1589,7 @@ public struct MetalNetworkView: NSViewRepresentable {
         onSelect: ((Int?, Int?) -> Void)? = nil,
         onDrawableSizeChange: ((CGSize) -> Void)? = nil,
         onPlacementPrimaryClick: ((MetalNetworkCoordinator, CGPoint, CGSize) -> Bool)? = nil,
+        onPriorityPick: ((CGPoint, CGSize) -> Bool)? = nil,
         linkPlacementSnapCursor: Bool = false,
         onRightMouseDown: (() -> Bool)? = nil,
         marqueeEnabled: Bool = false,
@@ -1617,6 +1628,7 @@ public struct MetalNetworkView: NSViewRepresentable {
         self.onSelect = onSelect
         self.onDrawableSizeChange = onDrawableSizeChange
         self.onPlacementPrimaryClick = onPlacementPrimaryClick
+        self.onPriorityPick = onPriorityPick
         self.linkPlacementSnapCursor = linkPlacementSnapCursor
         self.onRightMouseDown = onRightMouseDown
         self.marqueeEnabled = marqueeEnabled
@@ -1632,6 +1644,7 @@ public struct MetalNetworkView: NSViewRepresentable {
         container.onPressEscape = onPressEscape
         container.onMouseMove = onMouseMove
         context.coordinator.onSelect = onSelect
+        context.coordinator.onPriorityPick = onPriorityPick
         let coord = context.coordinator
         coord.onPlacementPrimaryClick = onPlacementPrimaryClick.map { fn in { fn(coord, $0, $1) } }
         container.coordinator = coord
@@ -1719,6 +1732,7 @@ public struct MetalNetworkView: NSViewRepresentable {
         context.coordinator.linkRGBValve = linkColorValve
         context.coordinator.layerVisibility = layerVisibility
         context.coordinator.onSelect = onSelect
+        context.coordinator.onPriorityPick = onPriorityPick
         context.coordinator.onDrawableSizeChange = onDrawableSizeChange
         let coord2 = context.coordinator
         coord2.onPlacementPrimaryClick = onPlacementPrimaryClick.map { fn in { fn(coord2, $0, $1) } }
@@ -1786,6 +1800,7 @@ public struct MetalNetworkView: UIViewRepresentable {
     let onSelect: ((Int?, Int?) -> Void)?
     let onDrawableSizeChange: ((CGSize) -> Void)?
     let onPlacementPrimaryClick: ((MetalNetworkCoordinator, CGPoint, CGSize) -> Bool)?
+    let onPriorityPick: ((CGPoint, CGSize) -> Bool)?
     let linkPlacementSnapCursor: Bool
     let onRightMouseDown: (() -> Bool)?
     let marqueeEnabled: Bool
@@ -1825,6 +1840,7 @@ public struct MetalNetworkView: UIViewRepresentable {
         onSelect: ((Int?, Int?) -> Void)? = nil,
         onDrawableSizeChange: ((CGSize) -> Void)? = nil,
         onPlacementPrimaryClick: ((MetalNetworkCoordinator, CGPoint, CGSize) -> Bool)? = nil,
+        onPriorityPick: ((CGPoint, CGSize) -> Bool)? = nil,
         linkPlacementSnapCursor: Bool = false,
         onRightMouseDown: (() -> Bool)? = nil,
         marqueeEnabled: Bool = false,
@@ -1863,6 +1879,7 @@ public struct MetalNetworkView: UIViewRepresentable {
         self.onSelect = onSelect
         self.onDrawableSizeChange = onDrawableSizeChange
         self.onPlacementPrimaryClick = onPlacementPrimaryClick
+        self.onPriorityPick = onPriorityPick
         self.linkPlacementSnapCursor = linkPlacementSnapCursor
         self.onRightMouseDown = onRightMouseDown
         self.marqueeEnabled = marqueeEnabled
@@ -1908,6 +1925,7 @@ public struct MetalNetworkView: UIViewRepresentable {
         context.coordinator.linkRGBValve = linkColorValve
         context.coordinator.layerVisibility = layerVisibility
         context.coordinator.onSelect = onSelect
+        context.coordinator.onPriorityPick = onPriorityPick
         context.coordinator.onDrawableSizeChange = onDrawableSizeChange
         let coord0 = context.coordinator
         coord0.onPlacementPrimaryClick = onPlacementPrimaryClick.map { fn in { fn(coord0, $0, $1) } }
@@ -1942,6 +1960,7 @@ public struct MetalNetworkView: UIViewRepresentable {
         context.coordinator.linkRGBValve = linkColorValve
         context.coordinator.layerVisibility = layerVisibility
         context.coordinator.onSelect = onSelect
+        context.coordinator.onPriorityPick = onPriorityPick
         context.coordinator.onDrawableSizeChange = onDrawableSizeChange
         let coordU = context.coordinator
         coordU.onPlacementPrimaryClick = onPlacementPrimaryClick.map { fn in { fn(coordU, $0, $1) } }

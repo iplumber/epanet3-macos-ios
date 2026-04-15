@@ -30,6 +30,7 @@
 #include <iostream>
 #include <cstring>
 #include <iomanip>
+#include <limits>
 #include <time.h>
 #include <string>
 #include <cstring>
@@ -759,6 +760,60 @@ int EN_setInpWriterSectionFractionDigits(const char* section, int digits, EN_Pro
         return 0;
     }
     nw->inpWriterFracBySection[Utilities::upperCase(std::string(section))] = d;
+    return 0;
+}
+
+// Bulk read all node results as float for the current solver state.
+// 4 separate arrays: pressure[nc], head[nc], demand[nc], tankLevel[nc].
+// tankLevel is NaN for non-tanks.
+int EN_getNodeResultsBulkF(float* pressure, float* head, float* demand, float* tankLevel, EN_Project p)
+{
+    if (!p) return 208;
+    Network* nw = project(p)->getNetwork();
+    int nc = nw->count(Element::NODE);
+    double lcf = nw->ucf(Units::LENGTH);
+    double pcf = nw->ucf(Units::PRESSURE);
+    double qcf = nw->ucf(Units::FLOW);
+    static const float nanVal = std::numeric_limits<float>::quiet_NaN();
+    for (int i = 0; i < nc; i++)
+    {
+        Node* nd = nw->node(i);
+        if (pressure) pressure[i] = static_cast<float>((nd->head - nd->elev) * pcf);
+        if (head)     head[i]     = static_cast<float>(nd->head * lcf);
+        if (demand)   demand[i]   = static_cast<float>(nd->actualDemand * qcf);
+        if (tankLevel)
+        {
+            if (nd->type() == Node::TANK)
+            {
+                Tank* tk = static_cast<Tank*>(nd);
+                tankLevel[i] = static_cast<float>((tk->head - tk->elev) * lcf);
+            }
+            else
+            {
+                tankLevel[i] = nanVal;
+            }
+        }
+    }
+    return 0;
+}
+
+// Bulk read all link results as float for the current solver state.
+// 4 separate arrays: flow[lc], velocity[lc], headloss[lc], status[lc].
+int EN_getLinkResultsBulkF(float* flow, float* velocity, float* headloss, float* status, EN_Project p)
+{
+    if (!p) return 208;
+    Network* nw = project(p)->getNetwork();
+    int lc = nw->count(Element::LINK);
+    double qcf = nw->ucf(Units::FLOW);
+    double lcfv = nw->ucf(Units::LENGTH);
+    for (int i = 0; i < lc; i++)
+    {
+        Link* lk = nw->link(i);
+        if (flow)     flow[i]     = static_cast<float>(lk->flow * qcf);
+        if (velocity) velocity[i] = static_cast<float>(lk->getVelocity() * lcfv);
+        if (headloss) headloss[i] = static_cast<float>(lk->hLoss * lcfv);
+        if (status)   status[i]   = static_cast<float>(lk->status);
+    }
     return 0;
 }
 

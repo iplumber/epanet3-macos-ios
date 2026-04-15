@@ -87,6 +87,14 @@ struct EPANET3MacApp: App {
             CommandGroup(after: .newItem) {
                 Button("打开") { appState.openFile() }
                     .keyboardShortcut("o", modifiers: .command)
+                Menu("导入") {
+                    Button("SCADA…") {
+                        appState.importScadaDeviceCSVsMac()
+                    }
+                    Button("SHP 文件…") {}
+                        .disabled(true)
+                }
+                .disabled(appState.filePath == nil || (appState.filePath?.isEmpty ?? true))
                 Divider()
                 Button("保存") { appState.saveFile() }
                     .keyboardShortcut("s", modifiers: .command)

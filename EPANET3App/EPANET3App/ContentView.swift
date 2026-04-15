@@ -79,6 +79,8 @@ public struct ContentView: View {
     @AppStorage("settings.display.layer.pipe") private var layerPipeVisible = true
     @AppStorage("settings.display.layer.pump") private var layerPumpVisible = true
     @AppStorage("settings.display.layer.valve") private var layerValveVisible = true
+    @AppStorage("settings.display.layer.scada.pressure") private var layerScadaPressureVisible = true
+    @AppStorage("settings.display.layer.scada.flow") private var layerScadaFlowVisible = true
 
     private var canvasLayerVisibility: CanvasLayerVisibility {
         CanvasLayerVisibility(
@@ -455,6 +457,22 @@ public struct ContentView: View {
                     onPlacementPrimaryClick: { coord, pt, sz in
                         appState.handleCanvasPlacementClick(coordinator: coord, viewPoint: pt, viewSize: sz)
                     },
+                    onPriorityPick: { viewPoint, viewSize in
+                        guard let pick = ScadaCanvasHitTest.pickDevice(
+                            viewPoint: viewPoint,
+                            viewSize: viewSize,
+                            transformBounds: squareFraming(for: scene),
+                            scale: scale,
+                            panX: panX,
+                            panY: panY,
+                            pressureDevices: appState.scadaPressureDevices,
+                            flowDevices: appState.scadaFlowDevices,
+                            showPressure: layerScadaPressureVisible,
+                            showFlow: layerScadaFlowVisible
+                        ) else { return false }
+                        appState.selectScadaDevice(pick)
+                        return true
+                    },
                     linkPlacementSnapCursor: linkPlacementSnapCursorActive,
                     onRightMouseDown: {
                         #if os(macOS)
@@ -543,6 +561,24 @@ public struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(false)
+
+            if !appState.scadaPressureDevices.isEmpty || !appState.scadaFlowDevices.isEmpty {
+                GeometryReader { _ in
+                    ScadaCanvasOverlay(
+                        pressureDevices: appState.scadaPressureDevices,
+                        flowDevices: appState.scadaFlowDevices,
+                        showPressure: layerScadaPressureVisible,
+                        showFlow: layerScadaFlowVisible,
+                        selectedDevice: appState.selectedScadaDevice,
+                        transformBounds: squareFraming(for: scene),
+                        scale: scale,
+                        panX: panX,
+                        panY: panY
+                    )
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+            }
 
             // 左下角标注图例：叠在 Metal + 画布标注之上（与管网重叠时覆盖管网）
             // 底层透明层不拦截手势，仅图例本体在 macOS 上可点进「显示 → 标注设置」。
@@ -663,7 +699,9 @@ public struct ContentView: View {
 
     private var showBottomChartPanel: Bool {
         guard appState.timeSeriesResults != nil else { return false }
-        return appState.selectedNodeIndex != nil || appState.selectedLinkIndex != nil
+        return appState.selectedNodeIndex != nil
+            || appState.selectedLinkIndex != nil
+            || appState.selectedScadaDevice != nil
     }
 
     private let bottomChartResizeHandleHeight: CGFloat = 8
@@ -784,7 +822,7 @@ public struct ContentView: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .help(showLeftSidebar ? "隐藏图例列表" : "显示图例列表")
+                .help(showLeftSidebar ? "隐藏左侧管网侧栏" : "显示左侧管网侧栏")
 
                 Button {
                     showRightPanel.toggle()
@@ -829,6 +867,14 @@ public struct ContentView: View {
                 .modifier(SheetPresentationChrome())
                 #endif
         }
+        #if os(macOS)
+        .sheet(isPresented: $appState.showScadaImportSheet) {
+            ScadaImportSheet(appState: appState)
+        }
+        .sheet(item: $appState.scadaMonitoringTimeSeriesImportPresentation) { pres in
+            ScadaMonitoringTimeSeriesImportSheet(appState: appState, kind: pres.kind)
+        }
+        #endif
         #if os(macOS)
         .onAppear { updateMacWindowTitle() }
         .onChange(of: appState.filePath) { _ in updateMacWindowTitle() }
@@ -1279,7 +1325,13 @@ private struct ResultTimeSeriesChartView: View {
     var body: some View {
         Group {
             if let store = store, store.stepCount >= 1 {
-                if let ni = appState.selectedNodeIndex {
+                if appState.selectedScadaDevice != nil {
+                    scadaDeviceChart(store: store)
+                        .onAppear { appState.reseedScadaChartPanelWhenScadaSelected() }
+                        .onChange(of: appState.timeSeriesResults?.stepCount) { _ in
+                            appState.reseedScadaChartPanelWhenScadaSelected()
+                        }
+                } else if let ni = appState.selectedNodeIndex {
                     nodeChart(store: store, nodeIndex: ni)
                 } else if let li = appState.selectedLinkIndex {
                     linkChart(store: store, linkIndex: li)
@@ -1293,6 +1345,49 @@ private struct ResultTimeSeriesChartView: View {
         .padding(.horizontal, 4)
         .padding(.vertical, 2)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - SCADA 实测 vs 仿真
+
+    @ViewBuilder
+    private func scadaDeviceChart(store: TimeSeriesResultStore) -> some View {
+        if let bundle = appState.scadaComparisonChartSeriesIfAvailable() {
+            let seriesKeys = Set(bundle.seriesByParam.keys)
+            let curves: [ChartPanelCurve] = {
+                if !appState.chartPanelCurves.isEmpty { return appState.chartPanelCurves }
+                return appState.inferredDefaultScadaChartPanelCurves(seriesByParamKeys: seriesKeys)
+            }()
+            let axis = Self.xAxisConfig(totalDurationSeconds: totalDuration)
+            let dataPoints = Self.buildChartData(
+                timePoints: bundle.timePoints,
+                curves: curves,
+                seriesByParam: bundle.seriesByParam,
+                divisor: axis.divisor
+            )
+            if dataPoints.isEmpty {
+                placeholder("所选仿真或监测序列暂无有效数据点（检查是否全为 NaN）")
+            } else {
+                let legendOrder = curves.map(\.paramKey).filter { seriesKeys.contains($0) }
+                chartBody(dataPoints: dataPoints, legendOrder: legendOrder)
+            }
+        } else {
+            VStack(spacing: 8) {
+                placeholder("请确认：已加载测压映射与设备表、已运行计算；映射表中键名需与设备表 MODEL 一致，或与设备 ID 一致（例：系统别名）。")
+                if let detail = appState.scadaChartDiagnosticMessage, !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 4)
+                }
+                Text("调试：在 Console.app 或 Xcode 控制台过滤「ScadaChart」或子系统 EPANET3App。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     // MARK: - Node chart
@@ -1780,11 +1875,15 @@ private struct ResultTimeSeriesChartContent: View {
         switch paramKey {
         case NodeChartParam.head.rawValue, NodeChartParam.pressure.rawValue:
             return String(format: "%.2f", value)
+        case ScadaChartSeriesKey.measuredPressure.rawValue:
+            return String(format: "%.2f", value)
         case NodeChartParam.demand.rawValue:
             return String(format: "%.4f", value)
         case NodeChartParam.tankLevel.rawValue:
             return String(format: "%.2f", value)
         case LinkChartParam.flow.rawValue, LinkChartParam.velocity.rawValue:
+            return NumericDisplayFormat.formatLinkFlowOrVelocity(value)
+        case ScadaChartSeriesKey.measuredFlow.rawValue:
             return NumericDisplayFormat.formatLinkFlowOrVelocity(value)
         case LinkChartParam.headloss.rawValue, LinkChartParam.status.rawValue:
             return String(format: "%.4f", value)
@@ -2676,6 +2775,26 @@ private struct MacDesignToolbar: View {
 
 }
 
+/// 侧栏「管网 / 参数 / 设备 / 分区」等区块标题：与下方 `MacTreeRow`（13pt 常规字重）区分。
+private struct SidebarSectionTitle: View {
+    private let text: String
+    private var topPadding: CGFloat
+
+    init(_ text: String, topPadding: CGFloat = 10) {
+        self.text = text
+        self.topPadding = topPadding
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 13, weight: .semibold, design: .rounded))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.top, topPadding)
+            .padding(.bottom, 6)
+    }
+}
+
 private struct MacDesignSidebar: View {
     @ObservedObject var appState: AppState
     @AppStorage("settings.display.layer.junction") private var layerJunction = true
@@ -2684,6 +2803,8 @@ private struct MacDesignSidebar: View {
     @AppStorage("settings.display.layer.pipe") private var layerPipe = true
     @AppStorage("settings.display.layer.pump") private var layerPump = true
     @AppStorage("settings.display.layer.valve") private var layerValve = true
+    @AppStorage("settings.display.layer.scada.pressure") private var layerScadaPressure = true
+    @AppStorage("settings.display.layer.scada.flow") private var layerScadaFlow = true
 
     private var documentReady: Bool { appState.project != nil }
 
@@ -2728,13 +2849,7 @@ private struct MacDesignSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("图层")
-                .font(.caption2.weight(.semibold))
-                .foregroundColor(.secondary)
-                .textCase(.uppercase)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 6)
+            SidebarSectionTitle("管网")
 
             // 单层列表：节点类与管段类不分组；管段类顺序为 阀门 → 管段 → 水泵
             if counts.junctions > 0 {
@@ -2781,13 +2896,7 @@ private struct MacDesignSidebar: View {
             }
 
             if documentReady {
-                Text("不可见对象")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 10)
-                    .padding(.bottom, 6)
+                SidebarSectionTitle("参数")
 
                 MacTreeRow(
                     title: "模式",
@@ -2822,16 +2931,97 @@ private struct MacDesignSidebar: View {
                     onOpenObjectTable: nil,
                     onTapRow: documentReady ? { appState.openInpSectionDetail(.controls) } : nil
                 )
+
+                SidebarSectionTitle("设备")
+
+                MacTreeRow(
+                    title: "压力",
+                    count: appState.scadaPressureDevices.count,
+                    icon: "gauge.medium",
+                    tint: Color(red: 0.16, green: 0.55, blue: 0.87),
+                    layerToggle: $layerScadaPressure,
+                    onTapCount: appState.scadaPressureDevices.isEmpty ? nil : { appState.openScadaDeviceTableWindow(.pressure) },
+                    onImportMonitoring: { appState.importScadaMonitoringTimeSeriesMac(kind: .pressure) }
+                )
+                .help("设备图层：压力测点")
+                MacTreeRow(
+                    title: "流量",
+                    count: appState.scadaFlowDevices.count,
+                    icon: "arrow.left.arrow.right",
+                    tint: Color(red: 0.85, green: 0.42, blue: 0.14),
+                    layerToggle: $layerScadaFlow,
+                    onTapCount: appState.scadaFlowDevices.isEmpty ? nil : { appState.openScadaDeviceTableWindow(.flow) },
+                    onImportMonitoring: { appState.importScadaMonitoringTimeSeriesMac(kind: .flow) }
+                )
+                .help("设备图层：流量测点")
+                MacTreeRow(
+                    title: "水表",
+                    count: 0,
+                    icon: "drop.circle",
+                    tint: .secondary,
+                    layerToggle: nil,
+                    layerTableKind: nil,
+                    canOpenObjectTable: false,
+                    onOpenObjectTable: nil,
+                    onTapRow: nil
+                )
+                .help("设备图层：水表（待接入）")
+                MacTreeRow(
+                    title: "消火栓",
+                    count: 0,
+                    icon: "flame.fill",
+                    tint: .secondary,
+                    layerToggle: nil,
+                    layerTableKind: nil,
+                    canOpenObjectTable: false,
+                    onOpenObjectTable: nil,
+                    onTapRow: nil
+                )
+                .help("设备图层：消火栓（待接入）")
+
+                SidebarSectionTitle("分区")
+
+                MacTreeRow(
+                    title: "一级分区",
+                    count: 0,
+                    icon: "1.circle",
+                    tint: .secondary,
+                    layerToggle: nil,
+                    layerTableKind: nil,
+                    canOpenObjectTable: false,
+                    onOpenObjectTable: nil,
+                    onTapRow: nil
+                )
+                .help("一级分区（待接入）")
+                MacTreeRow(
+                    title: "二级分区",
+                    count: 0,
+                    icon: "2.circle",
+                    tint: .secondary,
+                    layerToggle: nil,
+                    layerTableKind: nil,
+                    canOpenObjectTable: false,
+                    onOpenObjectTable: nil,
+                    onTapRow: nil
+                )
+                .help("二级分区（待接入）")
+                MacTreeRow(
+                    title: "三级分区",
+                    count: 0,
+                    icon: "3.circle",
+                    tint: .secondary,
+                    layerToggle: nil,
+                    layerTableKind: nil,
+                    canOpenObjectTable: false,
+                    onOpenObjectTable: nil,
+                    onTapRow: nil
+                )
+                .help("三级分区（待接入）")
             }
 
             Divider().padding(.vertical, 8)
 
-            Text("搜索")
-                .font(.caption2.weight(.semibold))
-                .foregroundColor(.secondary)
-                .textCase(.uppercase)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 6)
+            SidebarSectionTitle("搜索", topPadding: 0)
             TextField("按 ID 或名称...", text: .constant(""))
                 .textFieldStyle(.roundedBorder)
                 .padding(.horizontal, 12)
@@ -3096,6 +3286,10 @@ private struct MacTreeRow: View {
     var onOpenObjectTable: ((ObjectTableKind) -> Void)? = nil
     /// 非 nil 时整行可点（如侧栏「模式 / 曲线」打开 .inp 章节详情）。
     var onTapRow: (() -> Void)? = nil
+    /// 通用点击数字回调（优先于 `layerTableKind` 逻辑）：用于 SCADA 设备等非 ObjectTableKind 场景。
+    var onTapCount: (() -> Void)? = nil
+    /// 非 nil 时在本行（含「压力」「流量」标题）右键显示「导入监测时序数据…」。
+    var onImportMonitoring: (() -> Void)? = nil
 
     /// 与开关同宽占位，使无开关的父行数字列与有开关行对齐。
     private static let layerToggleColumnWidth: CGFloat = 20
@@ -3115,6 +3309,7 @@ private struct MacTreeRow: View {
                 rowCore
             }
         }
+        .scadaMonitoringImportContextMenu(onImportMonitoring)
     }
 
     private var rowCore: some View {
@@ -3167,7 +3362,19 @@ private struct MacTreeRow: View {
                         .frame(width: Self.layerToggleColumnWidth, height: Self.layerToggleColumnWidth)
                 }
                 Group {
-                    if let k = layerTableKind {
+                    if let tapCount = onTapCount {
+                        Button(action: tapCount) {
+                            Text(verbatim: String(count))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(count == 0)
+                        .help(count > 0 ? "点击查看设备表" : "暂无数据")
+                        .accessibilityLabel("数量 \(count)，打开表格")
+                    } else if let k = layerTableKind {
                         Button {
                             guard canOpenObjectTable else { return }
                             onOpenObjectTable?(k)
@@ -3197,6 +3404,20 @@ private struct MacTreeRow: View {
         .padding(.trailing, 12)
         .frame(minHeight: 24)
         .background(isActive ? Color.blue.opacity(0.08) : .clear)
+    }
+}
+
+private extension View {
+    /// 仅当 `action` 非 nil 时附加右键菜单，避免其它侧栏行出现空菜单。
+    @ViewBuilder
+    func scadaMonitoringImportContextMenu(_ action: (() -> Void)?) -> some View {
+        if let action {
+            self.contextMenu {
+                Button("导入监测时序数据…", action: action)
+            }
+        } else {
+            self
+        }
     }
 }
 
@@ -3497,6 +3718,25 @@ private struct RunResultSheet: View {
                             .foregroundColor(.secondary)
                         LabeledContent("流量单位") { Text(flowUnitsLine) }
                         LabeledContent("水头损失公式") { Text(headlossLine).fixedSize(horizontal: false, vertical: true) }
+                    }
+
+                    if appState.filePath != nil, appState.scadaSidecarSummary != nil || appState.scadaMapping != nil {
+                        Group {
+                            Text("SCADA 侧车")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(.secondary)
+                            if let path = appState.filePath {
+                                let sidecar = URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension(ScadaMappingConfiguration.fileExtension).lastPathComponent
+                                LabeledContent("映射文件") { Text(sidecar).textSelection(.enabled) }
+                            }
+                            if let s = appState.scadaSidecarSummary {
+                                Text(s)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .textSelection(.enabled)
+                            }
+                        }
                     }
 
                     if let result = appState.runResult {
